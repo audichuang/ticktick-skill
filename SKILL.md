@@ -1,6 +1,6 @@
 ---
 
-name: ticktick-skill
+name: ticktick
 description: Manages TickTick tasks and projects via CLI. Supports V1 Open API (tasks/projects CRUD, subtasks, reminders, repeat rules) and V2 internal API (search tasks, completed task history, tags CRUD, full sync). Use when the user asks to create, query, update, complete, or delete tasks; manage projects or tags; search for tasks; or view task completion history in TickTick.
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
