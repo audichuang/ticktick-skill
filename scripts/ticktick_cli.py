@@ -22,8 +22,10 @@ ticktick_cli.py — TickTick CLI 入口
 
 import argparse
 import json
+import re
 import sys
 import os
+from datetime import datetime
 
 # 確保可以 import 同目錄的 ticktick_api
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -33,7 +35,62 @@ from ticktick_api import (
     PRIORITY_MAP,
     PRIORITY_REVERSE,
     _json_output,
+    _error_exit,
 )
+
+
+# =============================================================================
+# 智慧時區工具（移植自 ticktick-mcp）
+# =============================================================================
+
+TIMEZONE_OFFSET_MAP = {
+    "+0800": "Asia/Taipei",
+    "+0900": "Asia/Tokyo",
+    "+0000": "UTC",
+    "-0500": "America/New_York",
+    "-0400": "America/New_York",
+    "-0800": "America/Los_Angeles",
+    "-0700": "America/Los_Angeles",
+    "+0100": "Europe/London",
+}
+
+
+def normalize_timezone_format(date_string: str) -> str:
+    """正規化時區格式：+08:00 / +8:00 / +8 → +0800"""
+    if not date_string:
+        return date_string
+    m = re.search(r'([+-])(\d{1,2}):?(\d{2})?$', date_string)
+    if m:
+        sign, hours, minutes = m.group(1), m.group(2).zfill(2), m.group(3) or "00"
+        return f"{date_string[:m.start()]}{sign}{hours}{minutes}"
+    return date_string
+
+
+def infer_timezone(date_string: str) -> str | None:
+    """從日期字串的時區偏移推斷時區名稱"""
+    if not date_string:
+        return None
+    m = re.search(r'([+-]\d{4})$', date_string)
+    return TIMEZONE_OFFSET_MAP.get(m.group(1)) if m else None
+
+
+def get_smart_timezone(time_zone: str, start_date: str, due_date: str) -> str | None:
+    """取得最佳時區：明確指定 > 從 start_date 推斷 > 從 due_date 推斷"""
+    if time_zone:
+        return time_zone
+    for d in (start_date, due_date):
+        tz = infer_timezone(d)
+        if tz:
+            return tz
+    return None
+
+
+def validate_date(date_str: str, name: str):
+    """驗證日期格式是否為合法 ISO 8601"""
+    try:
+        datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+    except ValueError:
+        _error_exit(f"{name} 格式錯誤，請使用 ISO 格式：yyyy-MM-ddTHH:mm:ss+0800")
 
 
 # =============================================================================
@@ -122,22 +179,35 @@ def cmd_task_create(args):
         kwargs["desc"] = args.desc.replace("\\n", "\n")
     if args.priority:
         kwargs["priority"] = PRIORITY_MAP.get(args.priority, 0)
-    if args.due:
-        kwargs["dueDate"] = args.due
-    if args.start:
-        kwargs["startDate"] = args.start
+
+    # 日期正規化 + 驗證
+    start_date = normalize_timezone_format(args.start) if args.start else None
+    due_date = normalize_timezone_format(args.due) if args.due else None
+    if start_date:
+        validate_date(start_date, "start")
+        kwargs["startDate"] = start_date
+    if due_date:
+        validate_date(due_date, "due")
+        kwargs["dueDate"] = due_date
+
     if args.all_day:
         kwargs["isAllDay"] = True
-    if args.timezone:
-        kwargs["timeZone"] = args.timezone
+
+    # 智慧時區推斷
+    smart_tz = get_smart_timezone(args.timezone, start_date, due_date)
+    if smart_tz:
+        kwargs["timeZone"] = smart_tz
+
     if args.kind:
         kwargs["kind"] = args.kind
     if args.reminder:
-        kwargs["reminders"] = args.reminder  # 可多次指定
+        for r in args.reminder:
+            if not r.startswith("TRIGGER:"):
+                _error_exit(f"reminder 格式錯誤: {r}，須以 TRIGGER: 開頭")
+        kwargs["reminders"] = args.reminder
     if args.repeat:
         kwargs["repeatFlag"] = args.repeat
     if args.subtask:
-        # 子任務格式: ["title1", "title2", ...]
         kwargs["items"] = [{"title": t, "status": 0} for t in args.subtask]
 
     result = client.create_task(**kwargs)
@@ -157,10 +227,24 @@ def cmd_task_update(args):
         kwargs["content"] = args.content.replace("\\n", "\n")
     if args.priority:
         kwargs["priority"] = PRIORITY_MAP.get(args.priority, 0)
-    if args.due:
-        kwargs["dueDate"] = args.due
-    if args.start:
-        kwargs["startDate"] = args.start
+
+    # 日期正規化 + 驗證
+    start_date = normalize_timezone_format(args.start) if args.start else None
+    due_date = normalize_timezone_format(args.due) if args.due else None
+    if start_date:
+        validate_date(start_date, "start")
+        kwargs["startDate"] = start_date
+    if due_date:
+        validate_date(due_date, "due")
+        kwargs["dueDate"] = due_date
+
+    # 智慧時區推斷
+    if hasattr(args, 'timezone') and args.timezone:
+        smart_tz = get_smart_timezone(args.timezone, start_date, due_date)
+    else:
+        smart_tz = get_smart_timezone(None, start_date, due_date)
+    if smart_tz:
+        kwargs["timeZone"] = smart_tz
 
     result = client.update_task(args.task_id, **kwargs)
     _json_output(result)

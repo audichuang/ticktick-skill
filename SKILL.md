@@ -68,6 +68,9 @@ ticktick_cli.py sync [--full]                                     # Full sync (d
 * `--project` is **required** for task-create and task-update
 * Priority: `none`=0, `low`=1, `medium`=3, `high`=5
 * Date format: ISO 8601 with timezone, e.g. `2026-03-01T09:00:00+0800`
+  * Flexible timezone input: `+08:00`, `+8:00`, `+8` are all auto-normalized to `+0800`
+* **Smart timezone**: If `--timezone` is omitted, it is auto-inferred from date offsets (e.g. `+0800` → `Asia/Taipei`)
+* Reminder format: `TRIGGER:-PT30M` (30min before), `TRIGGER:-PT1H` (1hr), `TRIGGER:-P1D` (1 day)
 * All output is JSON
 
 **API details**: See [api-reference.md](references/api-reference.md) for V1/V2 endpoint reference and task field definitions.
