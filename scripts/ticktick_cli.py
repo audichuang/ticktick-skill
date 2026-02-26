@@ -117,9 +117,9 @@ def cmd_task_create(args):
         "projectId": args.project,
     }
     if args.content:
-        kwargs["content"] = args.content
+        kwargs["content"] = args.content.replace("\\n", "\n")
     if args.desc:
-        kwargs["desc"] = args.desc
+        kwargs["desc"] = args.desc.replace("\\n", "\n")
     if args.priority:
         kwargs["priority"] = PRIORITY_MAP.get(args.priority, 0)
     if args.due:
@@ -154,7 +154,7 @@ def cmd_task_update(args):
     if args.title:
         kwargs["title"] = args.title
     if args.content:
-        kwargs["content"] = args.content
+        kwargs["content"] = args.content.replace("\\n", "\n")
     if args.priority:
         kwargs["priority"] = PRIORITY_MAP.get(args.priority, 0)
     if args.due:

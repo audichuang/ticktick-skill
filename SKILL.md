@@ -45,6 +45,14 @@ ticktick_cli.py task-complete <project_id> <task_id>
 ticktick_cli.py task-delete <project_id> <task_id>
 ```
 
+**Multi-line content**: Use `\n` in `--content` / `--desc` for line breaks. The CLI auto-converts literal `\n` to real newlines.
+
+```bash
+# Example: multi-line description
+ticktick_cli.py task-create --project <pid> --title "Meeting" \
+  --content "時間：2026/03/21 14:00-16:00\n地點：台北市中山區\n費用：NT$100"
+```
+
 ### Search, Tags & History (V2)
 
 ```bash
