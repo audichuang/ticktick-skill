@@ -488,10 +488,17 @@ class TickTickClient:
         _error_exit("create_task 需要 V1 認證")
 
     def update_task(self, task_id: str, **kwargs) -> dict:
-        """更新任務"""
-        if self.v1:
-            return self.v1.update_task(task_id, kwargs)
-        _error_exit("update_task 需要 V1 認證")
+        """更新任務（GET-merge-POST，避免覆蓋附件等欄位）"""
+        if not self.v1:
+            _error_exit("update_task 需要 V1 認證")
+        # 先取得完整 task data（含 attachments 等所有欄位）
+        project_id = kwargs.get("projectId")
+        if not project_id:
+            _error_exit("update_task 需要 projectId")
+        existing = self.v1.get_task(project_id, task_id)
+        # 把更新欄位 merge 上去
+        existing.update(kwargs)
+        return self.v1.update_task(task_id, existing)
 
     def complete_task(self, project_id: str, task_id: str) -> dict:
         """完成任務"""
