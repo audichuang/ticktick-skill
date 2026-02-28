@@ -78,6 +78,7 @@ Auth: `Cookie: t=<session_token>` + browser fingerprint headers
 | POST | `/batch/tag` | Batch tag operations |
 | GET | `/project/all/completed?limit=N` | All completed tasks |
 | GET | `/project/{pid}/completed?limit=N` | Project completed tasks |
+| POST | `/api/v1/attachment/upload/{pid}/{tid}/{aid}` | Upload attachment (multipart/form-data) |
 
 ### Sync Response Structure
 

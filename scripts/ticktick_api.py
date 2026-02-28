@@ -15,9 +15,11 @@ V2 (Internal):  內部 API，帳密 session 認證（逆向工程）
 """
 
 import json
+import mimetypes
 import os
 import secrets
 import sys
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -160,6 +162,7 @@ class TickTickV2:
         if not username or not password:
             _error_exit("TICKTICK_USERNAME 或 TICKTICK_PASSWORD 未設定")
         self.session_token = None
+        self.csrf_token = None
         self.inbox_id = None
         # 生成持久的裝置 ID（同一個 client 實例保持同一裝置身份）
         self._device_id = "65a0" + secrets.token_hex(10)
@@ -246,6 +249,10 @@ class TickTickV2:
                                         headers=self._headers())
             try:
                 with urllib.request.urlopen(req) as resp:
+                    # 從 Set-Cookie 擷取 _csrf_token
+                    for header in resp.headers.get_all("Set-Cookie") or []:
+                        if "_csrf_token=" in header:
+                            self.csrf_token = header.split("_csrf_token=")[1].split(";")[0]
                     result = json.loads(resp.read().decode("utf-8"))
                     self.session_token = result.get("token")
                     self.inbox_id = result.get("inboxId", "")
@@ -262,6 +269,69 @@ class TickTickV2:
     def sync(self) -> dict:
         """一次取得帳號全部資料（tasks, projects, tags, folders）"""
         return self._request("GET", "/batch/check/0")
+
+    # ── 附件上傳 ──────────────────────────────────────────────────────────
+
+    def upload_attachment(self, project_id: str, task_id: str,
+                          file_path: str) -> dict:
+        """上傳附件到指定任務
+
+        Args:
+            project_id: 專案 ID
+            task_id: 任務 ID
+            file_path: 本地檔案路徑
+
+        Returns:
+            API 回應 dict，包含 id, path, size, fileName, fileType, createdTime
+        """
+        if not os.path.exists(file_path):
+            _error_exit(f"檔案不存在: {file_path}")
+
+        # 生成 attachment ID（24 位 hex，類似 MongoDB ObjectId）
+        timestamp_hex = format(int(time.time()), '08x')
+        random_hex = secrets.token_hex(8)
+        attachment_id = timestamp_hex + random_hex
+
+        filename = os.path.basename(file_path)
+        content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+
+        # 構建 multipart/form-data body
+        boundary = "----WebKitFormBoundary" + secrets.token_hex(8)
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n"
+            f"\r\n"
+        ).encode("utf-8") + file_data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+        # 使用 V1 attachment endpoint（非 V2）
+        pid = urllib.parse.quote(project_id, safe="")
+        tid = urllib.parse.quote(task_id, safe="")
+        url = f"https://api.ticktick.com/api/v1/attachment/upload/{pid}/{tid}/{attachment_id}"
+
+        headers = self._headers()
+        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        headers["Accept"] = "*/*"
+        if self.csrf_token:
+            headers["x-csrftoken"] = self.csrf_token
+            headers["Cookie"] = f"t={self.session_token}; _csrf_token={self.csrf_token}"
+
+        req = urllib.request.Request(url, data=body, method="POST", headers=headers)
+
+        try:
+            with urllib.request.urlopen(req) as resp:
+                text = resp.read().decode("utf-8")
+                result = json.loads(text) if text else {}
+                result["attachmentUrl"] = (
+                    f"https://ticktick.com/api/v1/attachment/{pid}/{tid}/{attachment_id}"
+                )
+                return result
+        except urllib.error.HTTPError as e:
+            body_text = e.read().decode("utf-8", errors="replace")
+            _error_exit(f"附件上傳失敗 HTTP {e.code}: {body_text}")
 
     # ── 已完成任務 ────────────────────────────────────────────────────────
 
@@ -479,6 +549,13 @@ class TickTickClient:
         if not self.v2:
             _error_exit("sync 需要 V2 認證 (USERNAME+PASSWORD)")
         return self.v2.sync()
+
+    def upload_attachment(self, project_id: str, task_id: str,
+                          file_path: str) -> dict:
+        """上傳附件到指定任務"""
+        if not self.v2:
+            _error_exit("upload-attachment 需要 V2 認證 (USERNAME+PASSWORD)")
+        return self.v2.upload_attachment(project_id, task_id, file_path)
 
 
 # =============================================================================

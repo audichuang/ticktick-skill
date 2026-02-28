@@ -283,6 +283,17 @@ def cmd_completed(args):
     _json_output(tasks)
 
 
+def cmd_upload_attachment(args):
+    """上傳附件到任務（V2）"""
+    client = create_client_from_env()
+    result = client.upload_attachment(
+        project_id=args.project,
+        task_id=args.task,
+        file_path=args.file,
+    )
+    _json_output(result)
+
+
 def cmd_tags(args):
     """列出所有標籤（V2）"""
     client = create_client_from_env()
@@ -421,6 +432,11 @@ def build_parser():
     p.add_argument("--full", action="store_true",
                    help="輸出完整同步資料（預設只輸出摘要）")
 
+    p = sub.add_parser("upload-attachment", help="上傳附件到任務（V2）")
+    p.add_argument("--project", required=True, help="專案 ID")
+    p.add_argument("--task", required=True, help="任務 ID")
+    p.add_argument("--file", required=True, help="本地檔案路徑")
+
     return parser
 
 
@@ -445,6 +461,7 @@ COMMAND_MAP = {
     "tags": cmd_tags,
     "tag-create": cmd_tag_create,
     "sync": cmd_sync,
+    "upload-attachment": cmd_upload_attachment,
 }
 
 

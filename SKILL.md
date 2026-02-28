@@ -60,6 +60,7 @@ ticktick_cli.py search "keyword"                                  # Search by ti
 ticktick_cli.py completed [--project PID] [--limit 50]            # Completed tasks
 ticktick_cli.py tags                                              # List tags
 ticktick_cli.py tag-create --name "Important" [--color "#FF0000"]
+ticktick_cli.py upload-attachment --project <pid> --task <tid> --file /path/to/file  # Upload attachment
 ticktick_cli.py sync [--full]                                     # Full sync (debug)
 ```
 
