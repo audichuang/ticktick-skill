@@ -156,6 +156,9 @@ def cmd_tasks(args):
         tasks = [t for t in tasks if t.get("status", 0) == 0]
     elif args.status == "completed":
         tasks = [t for t in tasks if t.get("status", 0) == 2]
+    # Tag 篩選
+    if args.tag:
+        tasks = [t for t in tasks if args.tag in t.get("tags", [])]
     _json_output(tasks)
 
 
@@ -209,6 +212,8 @@ def cmd_task_create(args):
         kwargs["repeatFlag"] = args.repeat
     if args.subtask:
         kwargs["items"] = [{"title": t, "status": 0} for t in args.subtask]
+    if args.tag:
+        kwargs["tags"] = args.tag
 
     result = client.create_task(**kwargs)
     _json_output(result)
@@ -245,6 +250,8 @@ def cmd_task_update(args):
         smart_tz = get_smart_timezone(None, start_date, due_date)
     if smart_tz:
         kwargs["timeZone"] = smart_tz
+    if args.tag:
+        kwargs["tags"] = args.tag
 
     result = client.update_task(args.task_id, **kwargs)
     _json_output(result)
@@ -264,6 +271,29 @@ def cmd_task_delete(args):
     _json_output({"success": True, "deleted": args.task_id})
 
 
+def cmd_task_recent(args):
+    """查看專案最近 N 筆任務（精簡格式，供建立新任務時參考）"""
+    client = create_client_from_env()
+    tasks = client.list_tasks(project_id=args.project)
+    # Tag 篩選
+    if args.tag:
+        tasks = [t for t in tasks if args.tag in t.get("tags", [])]
+    # 按 createdDate 倒序排列
+    tasks.sort(key=lambda t: t.get("createdDate", ""), reverse=True)
+    tasks = tasks[:args.limit]
+    # 只保留關鍵欄位
+    KEEP = {"title", "content", "desc", "priority", "dueDate", "startDate",
+            "reminders", "repeatFlag", "items", "kind", "isAllDay", "timeZone",
+            "tags"}
+    slim = []
+    for t in tasks:
+        entry = {k: v for k, v in t.items() if k in KEEP and v}
+        if "priority" in entry:
+            entry["priority"] = PRIORITY_REVERSE.get(entry["priority"], entry["priority"])
+        slim.append(entry)
+    _json_output(slim)
+
+
 # ── V2 增強命令 ──────────────────────────────────────────────────────────
 
 def cmd_search(args):
@@ -280,6 +310,9 @@ def cmd_completed(args):
         project_id=args.project,
         limit=args.limit,
     )
+    # Tag 篩選
+    if args.tag:
+        tasks = [t for t in tasks if args.tag in t.get("tags", [])]
     _json_output(tasks)
 
 
@@ -309,6 +342,57 @@ def cmd_tag_create(args):
         color=args.color,
         parent=args.parent,
     )
+    _json_output(result)
+
+
+# ── Habits（V2）───────────────────────────────────────────────────────────
+
+def cmd_habits(args):
+    """列出所有習慣（含進度）"""
+    client = create_client_from_env()
+    habits = client.list_habits()
+    # 精簡輸出
+    slim = []
+    for h in habits:
+        entry = {
+            "id": h.get("id"),
+            "name": h.get("name"),
+            "goal": h.get("goal"),
+            "status": "活躍" if h.get("status", 0) == 0 else "已封存",
+            "totalCheckIns": h.get("totalCheckIns", 0),
+            "repeatRule": h.get("repeatRule", ""),
+        }
+        slim.append(entry)
+    _json_output(slim)
+
+
+def cmd_habit_create(args):
+    """建立習慣"""
+    client = create_client_from_env()
+    result = client.create_habit(
+        name=args.name,
+        frequency=args.frequency,
+        period=args.period,
+        color=args.color,
+        reminder=args.reminder,
+    )
+    _json_output(result)
+
+
+def cmd_habit_checkin(args):
+    """習慣打卡"""
+    client = create_client_from_env()
+    result = client.checkin_habit(
+        habit_id=args.habit,
+        date=args.date,
+    )
+    _json_output(result)
+
+
+def cmd_habit_delete(args):
+    """刪除習慣"""
+    client = create_client_from_env()
+    result = client.delete_habit(args.habit)
     _json_output(result)
 
 
@@ -370,6 +454,7 @@ def build_parser():
     p.add_argument("--project", help="專案 ID（不指定則列出全部）")
     p.add_argument("--status", choices=["pending", "completed"],
                    help="過濾狀態")
+    p.add_argument("--tag", help="按 tag 篩選")
 
     p = sub.add_parser("task-get", help="取得單一任務")
     p.add_argument("project_id", help="專案 ID")
@@ -393,6 +478,8 @@ def build_parser():
     p.add_argument("--repeat", help='重複規則 RRULE，如 "RRULE:FREQ=DAILY"')
     p.add_argument("--subtask", action="append",
                    help="子任務標題（可多次指定）")
+    p.add_argument("--tag", action="append",
+                   help="標籤（可多次指定）")
 
     p = sub.add_parser("task-update", help="更新任務")
     p.add_argument("task_id", help="任務 ID")
@@ -403,6 +490,8 @@ def build_parser():
                    help="新優先級")
     p.add_argument("--due", help="新到期日")
     p.add_argument("--start", help="新開始日期")
+    p.add_argument("--tag", action="append",
+                   help="標籤（可多次指定）")
 
     p = sub.add_parser("task-complete", help="完成任務")
     p.add_argument("project_id", help="專案 ID")
@@ -412,6 +501,13 @@ def build_parser():
     p.add_argument("project_id", help="專案 ID")
     p.add_argument("task_id", help="任務 ID")
 
+    p = sub.add_parser("task-recent",
+                       help="查看專案最近 N 筆任務（精簡格式，建立新任務前參考用）")
+    p.add_argument("--project", required=True, help="專案 ID")
+    p.add_argument("--limit", type=int, default=5,
+                   help="筆數上限（預設 5）")
+    p.add_argument("--tag", help="按 tag 篩選")
+
     # ── V2 增強命令 ──────────────────────────────────────────────────────
 
     p = sub.add_parser("search", help="搜尋任務（V2）")
@@ -420,6 +516,7 @@ def build_parser():
     p = sub.add_parser("completed", help="已完成任務（V2）")
     p.add_argument("--project", help="專案 ID（不指定則全部）")
     p.add_argument("--limit", type=int, default=50, help="筆數上限")
+    p.add_argument("--tag", help="按 tag 篩選")
 
     sub.add_parser("tags", help="列出所有標籤（V2）")
 
@@ -431,6 +528,26 @@ def build_parser():
     p = sub.add_parser("sync", help="全量同步（V2，除錯用）")
     p.add_argument("--full", action="store_true",
                    help="輸出完整同步資料（預設只輸出摘要）")
+
+    # ── Habits（V2）──────────────────────────────────────────────────────
+
+    sub.add_parser("habits", help="列出所有習慣（V2）")
+
+    p = sub.add_parser("habit-create", help="建立習慣（V2）")
+    p.add_argument("--name", required=True, help="習慣名稱")
+    p.add_argument("--frequency", type=int, default=1,
+                   help="目標次數（預設 1）")
+    p.add_argument("--period", choices=["day", "week"], default="day",
+                   help="週期：day 或 week（預設 day）")
+    p.add_argument("--color", help="顏色 hex")
+    p.add_argument("--reminder", help="提醒時間，如 \"09:00\"")
+
+    p = sub.add_parser("habit-checkin", help="習慣打卡（V2）")
+    p.add_argument("--habit", required=True, help="習慣 ID")
+    p.add_argument("--date", help="日期 YYYYMMDD（預設今天）")
+
+    p = sub.add_parser("habit-delete", help="刪除習慣（V2）")
+    p.add_argument("--habit", required=True, help="習慣 ID")
 
     p = sub.add_parser("upload-attachment", help="上傳附件到任務（V2）")
     p.add_argument("--project", required=True, help="專案 ID")
@@ -456,12 +573,17 @@ COMMAND_MAP = {
     "task-update": cmd_task_update,
     "task-complete": cmd_task_complete,
     "task-delete": cmd_task_delete,
+    "task-recent": cmd_task_recent,
     "search": cmd_search,
     "completed": cmd_completed,
     "tags": cmd_tags,
     "tag-create": cmd_tag_create,
     "sync": cmd_sync,
     "upload-attachment": cmd_upload_attachment,
+    "habits": cmd_habits,
+    "habit-create": cmd_habit_create,
+    "habit-checkin": cmd_habit_checkin,
+    "habit-delete": cmd_habit_delete,
 }
 
 

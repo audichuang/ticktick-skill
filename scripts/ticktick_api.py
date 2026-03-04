@@ -361,6 +361,26 @@ class TickTickV2:
             payload["delete"] = delete
         return self._request("POST", "/batch/task", payload)
 
+    # ── Habits ──────────────────────────────────────────────────────────────
+
+    def list_habits(self) -> list:
+        """列出所有習慣"""
+        return self._request("GET", "/habits")
+
+    def batch_habit(self, add: list = None, update: list = None,
+                    delete: list = None) -> dict:
+        """批次習慣操作"""
+        payload = {"add": add or [], "update": update or [],
+                   "delete": delete or []}
+        return self._request("POST", "/habits/batch", payload)
+
+    def batch_checkin(self, add: list = None, update: list = None,
+                      delete: list = None) -> dict:
+        """批次打卡操作"""
+        payload = {"add": add or [], "update": update or [],
+                   "delete": delete or []}
+        return self._request("POST", "/habitCheckins/batch", payload)
+
     # ── Tags ──────────────────────────────────────────────────────────────
 
     def list_tags(self) -> list:
@@ -550,6 +570,89 @@ class TickTickClient:
         if parent:
             tag["parent"] = parent.lower()
         return self.v2.batch_tag(add=[tag])
+
+    # ── Habits（V2）────────────────────────────────────────────────────────
+
+    def list_habits(self) -> list:
+        """列出所有習慣"""
+        if not self.v2:
+            _error_exit("habits 需要 V2 認證 (USERNAME+PASSWORD)")
+        return self.v2.list_habits()
+
+    def create_habit(self, name: str, frequency: int = 1,
+                     period: str = "day", icon: str = None,
+                     color: str = None, reminder: str = None) -> dict:
+        """建立習慣
+
+        Args:
+            name: 習慣名稱
+            frequency: 目標次數（預設 1）
+            period: day / week
+            icon: emoji icon
+            color: 顏色 hex
+            reminder: 提醒時間，如 "09:00"
+        """
+        if not self.v2:
+            _error_exit("habit-create 需要 V2 認證 (USERNAME+PASSWORD)")
+        import secrets, time
+        habit_id = format(int(time.time()), '08x') + secrets.token_hex(8)
+        # 根據週期建立 RRULE
+        if period == "week":
+            repeat = f"RRULE:FREQ=WEEKLY;INTERVAL=1;TT_TIMES={frequency}"
+        else:
+            repeat = "RRULE:FREQ=DAILY;INTERVAL=1"
+        habit = {
+            "id": habit_id,
+            "name": name,
+            "type": "Boolean",
+            "goal": float(frequency),
+            "unit": "Count",
+            "step": 1.0,
+            "repeatRule": repeat,
+            "status": 0,
+            "encouragement": "",
+            "totalCheckIns": 0,
+            "sectionId": "",
+        }
+        if icon:
+            habit["iconRes"] = icon
+        if color:
+            habit["color"] = color
+        if reminder:
+            habit["reminders"] = [reminder]
+        return self.v2.batch_habit(add=[habit])
+
+    def checkin_habit(self, habit_id: str, date: str = None,
+                      value: float = 1.0) -> dict:
+        """習慣打卡
+
+        Args:
+            habit_id: 習慣 ID
+            date: 日期 YYYYMMDD（預設今天）
+            value: 打卡值（預設 1）
+        """
+        if not self.v2:
+            _error_exit("habit-checkin 需要 V2 認證 (USERNAME+PASSWORD)")
+        import time, secrets
+        if not date:
+            from datetime import datetime
+            date = datetime.now().strftime("%Y%m%d")
+        checkin_id = format(int(time.time()), '08x') + secrets.token_hex(8)
+        checkin = {
+            "id": checkin_id,
+            "habitId": habit_id,
+            "checkinStamp": int(date),
+            "status": 2,
+            "value": value,
+            "goal": 0,
+        }
+        return self.v2.batch_checkin(add=[checkin])
+
+    def delete_habit(self, habit_id: str) -> dict:
+        """刪除習慣"""
+        if not self.v2:
+            _error_exit("habit-delete 需要 V2 認證 (USERNAME+PASSWORD)")
+        return self.v2.batch_habit(delete=[habit_id])
 
     def sync(self) -> dict:
         """全量同步（除錯用）"""
