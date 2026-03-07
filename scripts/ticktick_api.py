@@ -403,10 +403,11 @@ class TickTickAPI:
             frequency: 目標次數（預設 1）
             period: day / week
             icon: emoji icon
-            color: 顏色 hex
+            color: 顏色 hex（預設 #97E38B 綠色）
             reminder: 提醒時間，如 "09:00"
         """
         habit_id = format(int(time.time()), '08x') + secrets.token_hex(8)
+        today = time.strftime("%Y%m%d")
         # 根據週期建立 RRULE
         if period == "week":
             repeat = f"RRULE:FREQ=WEEKLY;INTERVAL=1;TT_TIMES={frequency}"
@@ -416,21 +417,27 @@ class TickTickAPI:
             "id": habit_id,
             "name": name,
             "type": "Boolean",
-            "goal": float(frequency),
+            "goal": 1.0,                    # 每次打卡 1 次（次數由 TT_TIMES 控制）
             "unit": "Count",
             "step": 1.0,
             "repeatRule": repeat,
             "status": 0,
             "encouragement": "",
             "totalCheckIns": 0,
-            "sectionId": "",
+            "completedCycles": 0,
+            # ── App 顯示必需欄位 ──
+            "color": color or "#97E38B",    # 預設綠色
+            "iconRes": icon or "",
+            "sortOrder": 0,
+            "sectionId": "-1",              # -1 = 預設 section
+            "targetDays": 0,
+            "targetStartDate": int(today),  # YYYYMMDD 整數
+            "style": 1,
+            "reminders": [reminder] if reminder else [],
+            "recordEnable": False,
+            "archivedTime": "2001-01-01T00:00:00.000+0000",
+            "exDates": [],
         }
-        if icon:
-            habit["iconRes"] = icon
-        if color:
-            habit["color"] = color
-        if reminder:
-            habit["reminders"] = [reminder]
         return self._request("POST", "/habits/batch", {
             "add": [habit], "update": [], "delete": [],
         })
