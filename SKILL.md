@@ -1,21 +1,21 @@
 ---
 name: ticktick
-description: "Manages TickTick tasks and projects via CLI. Supports V1 Open API (tasks/projects CRUD, subtasks, reminders, repeat rules) and V2 internal API (search tasks, completed task history, tags CRUD, full sync). Use when the user asks to create, query, update, complete, or delete tasks; manage projects or tags; search for tasks; or view task completion history in TickTick."
+description: "Manages TickTick tasks, projects, tags, and habits via CLI. Supports tasks CRUD, subtasks, reminders, repeat rules, search, completed task history, tags CRUD, habits with check-ins, and file attachments. Use when the user asks to create, query, update, complete, or delete tasks; manage projects or tags; search for tasks; view task completion history; or track habits in TickTick."
 ---
 
 # TickTick Skill
 
-Manages TickTick tasks and projects. Combines V1 official API (stable CRUD) with V2 internal API (search, tags, completed history).
+管理 TickTick 任務、專案、標籤和習慣的 CLI 工具。
 
 ## Running Commands
 
-All commands require Doppler for credential injection:
+所有命令透過 Doppler 注入認證：
 
 ```bash
 doppler run -p ticktick -c dev -- python3 scripts/ticktick_cli.py <command>
 ```
 
-**Workflow**: Always run `projects` first to get project IDs, then perform task operations.
+**Workflow**: 先用 `projects` 取得 project ID，再進行 task 操作。
 
 ## ⚠️ 建立任務的標準工作流程（必須遵守）
 
@@ -44,7 +44,7 @@ doppler run -p ticktick -c dev -- python3 scripts/ticktick_cli.py <command>
 
 ## Commands
 
-### Projects (V1)
+### Projects
 
 ```bash
 ticktick_cli.py projects                                          # List all
@@ -54,7 +54,7 @@ ticktick_cli.py project-update <project_id> [--name "..."] [--color "..."]
 ticktick_cli.py project-delete <project_id>
 ```
 
-### Tasks (V1)
+### Tasks
 
 ```bash
 ticktick_cli.py task-recent --project <pid> [--limit 5] [--tag TAG]   # ⚠️ 建立前先看格式
@@ -79,18 +79,22 @@ ticktick_cli.py task-create --project <pid> --title "Meeting" \
   --content "時間：2026/03/21 14:00-16:00\n地點：台北市中山區\n費用：NT$100"
 ```
 
-### Search, Tags & History (V2)
+### Search & History
 
 ```bash
-ticktick_cli.py search "keyword"                                  # Search by title/content
+ticktick_cli.py search "keyword"                                  # Search active + completed tasks
+ticktick_cli.py search "keyword" --active-only                    # Search active tasks only
 ticktick_cli.py completed [--project PID] [--limit 50] [--tag TAG]  # Completed tasks (filterable)
-ticktick_cli.py tags                                              # List tags
-ticktick_cli.py tag-create --name "Important" [--color "#FF0000"]
-ticktick_cli.py upload-attachment --project <pid> --task <tid> --file /path/to/file  # Upload attachment
-ticktick_cli.py sync [--full]                                     # Full sync (debug)
 ```
 
-### Habits（V2 習慣打卡）
+### Tags
+
+```bash
+ticktick_cli.py tags                                              # List tags
+ticktick_cli.py tag-create --name "Important" [--color "#FF0000"]
+```
+
+### Habits
 
 ```bash
 ticktick_cli.py habits                                             # List habits
@@ -100,6 +104,13 @@ ticktick_cli.py habit-delete --habit <id>
 ```
 
 **Tasks + Habits 搭配**：完成運動/上課 Task 後，同時用 `habit-checkin` 打卡追蹤週目標。
+
+### Utilities
+
+```bash
+ticktick_cli.py upload-attachment --project <pid> --task <tid> --file /path/to/file  # Upload attachment
+ticktick_cli.py sync [--full]                                     # Full sync (debug)
+```
 
 ## Key Parameters
 
@@ -112,4 +123,4 @@ ticktick_cli.py habit-delete --habit <id>
 * Reminder format: `TRIGGER:-PT30M` (30min before), `TRIGGER:-PT1H` (1hr), `TRIGGER:-P1D` (1 day)
 * All output is JSON
 
-**API details**: See [api-reference.md](references/api-reference.md) for V1/V2 endpoint reference and task field definitions.
+**API details**: See [api-reference.md](references/api-reference.md) for endpoint reference and task field definitions.

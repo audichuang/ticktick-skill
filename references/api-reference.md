@@ -2,39 +2,62 @@
 
 ## Contents
 
-* V1 Open API endpoints (Task, Project)
-* V1 Task field definitions
-* V2 Internal API endpoints (Auth, Sync, Batch, Completed)
-* V2 Sync response structure
+* API endpoints (Auth, Tasks, Projects, Tags, Habits, Sync)
+* Task field definitions
 * Environment variables
 
-## V1 — Open API
+## Base
 
-Base URL: `https://api.ticktick.com/open/v1`
-Auth: `Authorization: Bearer <TICKTICK_ACCESS_TOKEN>`
+Base URL: `https://api.ticktick.com/api/v2`
+Auth: `Cookie: t=<session_token>` + browser fingerprint headers
 
-### Task Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/project/{pid}/task/{tid}` | Get task |
-| POST | `/task` | Create task |
-| POST | `/task/{tid}` | Update task |
-| POST | `/project/{pid}/task/{tid}/complete` | Complete task |
-| DELETE | `/project/{pid}/task/{tid}` | Delete task |
-
-### Project Endpoints
+## Auth Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/project` | List projects |
-| GET | `/project/{pid}` | Get project |
-| GET | `/project/{pid}/data` | Get project + tasks + columns |
-| POST | `/project` | Create project |
-| POST | `/project/{pid}` | Update project |
-| DELETE | `/project/{pid}` | Delete project |
+| POST | `/user/signon?wc=true&remember=true` | Login (returns token) |
+| GET | `/user/preferences/settings?includeWeb=true` | User settings |
+| GET | `/user/profile` | User profile |
 
-### Task Fields
+## Task Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/batch/check/0` | Full sync (get all tasks) |
+| POST | `/batch/task` | Batch task operations (add/update/delete) |
+| POST | `/batch/taskComplete` | Complete tasks |
+| GET | `/project/all/completed?limit=N` | All completed tasks |
+| GET | `/project/{pid}/completed?limit=N` | Project completed tasks |
+
+## Project Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/batch/check/0` | Full sync (get all projects) |
+| POST | `/batch/projectProfile` | Batch project operations (add/update/delete) |
+
+## Tag Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/batch/check/0` | Full sync (get all tags) |
+| POST | `/batch/tag` | Batch tag operations (add/update/delete) |
+
+## Habit Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/habits` | List all habits |
+| POST | `/habits/batch` | Batch habit operations (add/update/delete) |
+| POST | `/habitCheckins/batch` | Batch check-in operations |
+
+## Attachment Endpoint
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/attachment/upload/{pid}/{tid}/{aid}` | Upload attachment (multipart/form-data) |
+
+## Task Fields
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -54,33 +77,7 @@ Auth: `Authorization: Bearer <TICKTICK_ACCESS_TOKEN>`
 | tags | string\[] | Tag labels |
 | kind | string | TEXT / NOTE / CHECKLIST |
 
-***
-
-## V2 — Internal API
-
-Base URL: `https://api.ticktick.com/api/v2`
-Auth: `Cookie: t=<session_token>` + browser fingerprint headers
-
-### Auth Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/user/signon?wc=true&remember=true` | Login (returns token) |
-| GET | `/user/preferences/settings?includeWeb=true` | User settings |
-| GET | `/user/profile` | User profile |
-
-### Data Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/batch/check/0` | Full sync (all tasks/projects/tags) |
-| POST | `/batch/task` | Batch task operations |
-| POST | `/batch/tag` | Batch tag operations |
-| GET | `/project/all/completed?limit=N` | All completed tasks |
-| GET | `/project/{pid}/completed?limit=N` | Project completed tasks |
-| POST | `/api/v1/attachment/upload/{pid}/{tid}/{aid}` | Upload attachment (multipart/form-data) |
-
-### Sync Response Structure
+## Sync Response Structure
 
 ```json
 {
@@ -94,14 +91,11 @@ Auth: `Cookie: t=<session_token>` + browser fingerprint headers
 }
 ```
 
-***
-
 ## Environment Variables
 
 Injected via `doppler run -p ticktick -c dev`:
 
-| Variable | Purpose | Required For |
-|----------|---------|-------------|
-| `TICKTICK_ACCESS_TOKEN` | V1 OAuth Bearer token | V1 operations |
-| `TICKTICK_USERNAME` | TickTick email | V2 operations |
-| `TICKTICK_PASSWORD` | TickTick password | V2 operations |
+| Variable | Purpose |
+|----------|---------|
+| `TICKTICK_USERNAME` | TickTick email |
+| `TICKTICK_PASSWORD` | TickTick password |

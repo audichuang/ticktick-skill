@@ -16,7 +16,7 @@ ticktick_cli.py — TickTick CLI 入口
     --reminder "TRIGGER:-PT30M" \
     --repeat "RRULE:FREQ=DAILY;INTERVAL=1"
 
-  # 搜尋任務（V2）
+  # 搜尋任務
   doppler run -p ticktick -c dev -- python3 scripts/ticktick_cli.py search "站會"
 """
 
@@ -40,7 +40,7 @@ from ticktick_api import (
 
 
 # =============================================================================
-# 智慧時區工具（移植自 ticktick-mcp）
+# 智慧時區工具
 # =============================================================================
 
 TIMEZONE_OFFSET_MAP = {
@@ -105,7 +105,7 @@ def cmd_projects(args):
 
 
 def cmd_project_get(args):
-    """取得單一專案（含任務和欄位）"""
+    """取得單一專案（含任務）"""
     client = create_client_from_env()
     data = client.get_project_data(args.project_id)
     _json_output(data)
@@ -114,36 +114,36 @@ def cmd_project_get(args):
 def cmd_project_create(args):
     """建立專案"""
     client = create_client_from_env()
-    kwargs = {"name": args.name}
+    data = {"name": args.name}
     if args.color:
-        kwargs["color"] = args.color
+        data["color"] = args.color
     if args.view:
-        kwargs["viewMode"] = args.view
+        data["viewMode"] = args.view
     if args.kind:
-        kwargs["kind"] = args.kind
-    result = client.create_project(**kwargs)
+        data["kind"] = args.kind
+    result = client.create_project(data)
     _json_output(result)
 
 
 def cmd_project_update(args):
     """更新專案"""
     client = create_client_from_env()
-    kwargs = {}
+    data = {}
     if args.name:
-        kwargs["name"] = args.name
+        data["name"] = args.name
     if args.color:
-        kwargs["color"] = args.color
-    if not kwargs:
+        data["color"] = args.color
+    if not data:
         print("錯誤: 至少需要指定一個要更新的欄位 (--name, --color)", file=sys.stderr)
         sys.exit(1)
-    result = client.update_project(args.project_id, **kwargs)
+    result = client.update_project(args.project_id, data)
     _json_output(result)
 
 
 def cmd_project_delete(args):
     """刪除專案"""
     client = create_client_from_env()
-    result = client.delete_project(args.project_id)
+    client.delete_project(args.project_id)
     _json_output({"success": True, "deleted": args.project_id})
 
 
@@ -172,76 +172,76 @@ def cmd_task_get(args):
 def cmd_task_create(args):
     """建立任務"""
     client = create_client_from_env()
-    kwargs = {
+    data = {
         "title": args.title,
         "projectId": args.project,
     }
     if args.content:
-        kwargs["content"] = args.content.replace("\\n", "\n")
+        data["content"] = args.content.replace("\\n", "\n")
     if args.desc:
-        kwargs["desc"] = args.desc.replace("\\n", "\n")
+        data["desc"] = args.desc.replace("\\n", "\n")
     if args.priority:
-        kwargs["priority"] = PRIORITY_MAP.get(args.priority, 0)
+        data["priority"] = PRIORITY_MAP.get(args.priority, 0)
 
     # 日期正規化 + 驗證
     start_date = normalize_timezone_format(args.start) if args.start else None
     due_date = normalize_timezone_format(args.due) if args.due else None
     if start_date:
         validate_date(start_date, "start")
-        kwargs["startDate"] = start_date
+        data["startDate"] = start_date
     if due_date:
         validate_date(due_date, "due")
-        kwargs["dueDate"] = due_date
+        data["dueDate"] = due_date
 
     if args.all_day:
-        kwargs["isAllDay"] = True
+        data["isAllDay"] = True
 
     # 智慧時區推斷
     smart_tz = get_smart_timezone(args.timezone, start_date, due_date)
     if smart_tz:
-        kwargs["timeZone"] = smart_tz
+        data["timeZone"] = smart_tz
 
     if args.kind:
-        kwargs["kind"] = args.kind
+        data["kind"] = args.kind
     if args.reminder:
         for r in args.reminder:
             if not r.startswith("TRIGGER:"):
                 _error_exit(f"reminder 格式錯誤: {r}，須以 TRIGGER: 開頭")
-        kwargs["reminders"] = args.reminder
+        data["reminders"] = args.reminder
     if args.repeat:
-        kwargs["repeatFlag"] = args.repeat
+        data["repeatFlag"] = args.repeat
     if args.subtask:
-        kwargs["items"] = [{"title": t, "status": 0} for t in args.subtask]
+        data["items"] = [{"title": t, "status": 0} for t in args.subtask]
     if args.tag:
-        kwargs["tags"] = args.tag
+        data["tags"] = args.tag
 
-    result = client.create_task(**kwargs)
+    result = client.create_task(data)
     _json_output(result)
 
 
 def cmd_task_update(args):
     """更新任務"""
     client = create_client_from_env()
-    kwargs = {
+    data = {
         "id": args.task_id,
         "projectId": args.project,
     }
     if args.title:
-        kwargs["title"] = args.title
+        data["title"] = args.title
     if args.content:
-        kwargs["content"] = args.content.replace("\\n", "\n")
+        data["content"] = args.content.replace("\\n", "\n")
     if args.priority:
-        kwargs["priority"] = PRIORITY_MAP.get(args.priority, 0)
+        data["priority"] = PRIORITY_MAP.get(args.priority, 0)
 
     # 日期正規化 + 驗證
     start_date = normalize_timezone_format(args.start) if args.start else None
     due_date = normalize_timezone_format(args.due) if args.due else None
     if start_date:
         validate_date(start_date, "start")
-        kwargs["startDate"] = start_date
+        data["startDate"] = start_date
     if due_date:
         validate_date(due_date, "due")
-        kwargs["dueDate"] = due_date
+        data["dueDate"] = due_date
 
     # 智慧時區推斷
     if hasattr(args, 'timezone') and args.timezone:
@@ -249,25 +249,25 @@ def cmd_task_update(args):
     else:
         smart_tz = get_smart_timezone(None, start_date, due_date)
     if smart_tz:
-        kwargs["timeZone"] = smart_tz
+        data["timeZone"] = smart_tz
     if args.tag:
-        kwargs["tags"] = args.tag
+        data["tags"] = args.tag
 
-    result = client.update_task(args.task_id, **kwargs)
+    result = client.update_task(data)
     _json_output(result)
 
 
 def cmd_task_complete(args):
     """完成任務"""
     client = create_client_from_env()
-    result = client.complete_task(args.project_id, args.task_id)
+    client.complete_task(args.project_id, args.task_id)
     _json_output({"success": True, "completed": args.task_id})
 
 
 def cmd_task_delete(args):
     """刪除任務"""
     client = create_client_from_env()
-    result = client.delete_task(args.project_id, args.task_id)
+    client.delete_task(args.project_id, args.task_id)
     _json_output({"success": True, "deleted": args.task_id})
 
 
@@ -294,17 +294,18 @@ def cmd_task_recent(args):
     _json_output(slim)
 
 
-# ── V2 增強命令 ──────────────────────────────────────────────────────────
+# ── 搜尋與歷史 ──────────────────────────────────────────────────────────
 
 def cmd_search(args):
-    """搜尋任務（V2）"""
+    """搜尋任務（預設包含已完成任務）"""
     client = create_client_from_env()
-    tasks = client.search_tasks(args.query)
+    include_completed = not args.active_only
+    tasks = client.search_tasks(args.query, include_completed=include_completed)
     _json_output(tasks)
 
 
 def cmd_completed(args):
-    """已完成任務（V2）"""
+    """已完成任務"""
     client = create_client_from_env()
     tasks = client.get_completed_tasks(
         project_id=args.project,
@@ -317,7 +318,7 @@ def cmd_completed(args):
 
 
 def cmd_upload_attachment(args):
-    """上傳附件到任務（V2）"""
+    """上傳附件到任務"""
     client = create_client_from_env()
     result = client.upload_attachment(
         project_id=args.project,
@@ -328,14 +329,14 @@ def cmd_upload_attachment(args):
 
 
 def cmd_tags(args):
-    """列出所有標籤（V2）"""
+    """列出所有標籤"""
     client = create_client_from_env()
     tags = client.list_tags()
     _json_output(tags)
 
 
 def cmd_tag_create(args):
-    """建立標籤（V2）"""
+    """建立標籤"""
     client = create_client_from_env()
     result = client.create_tag(
         name=args.name,
@@ -345,7 +346,7 @@ def cmd_tag_create(args):
     _json_output(result)
 
 
-# ── Habits（V2）───────────────────────────────────────────────────────────
+# ── Habits ───────────────────────────────────────────────────────────────
 
 def cmd_habits(args):
     """列出所有習慣（含進度）"""
@@ -397,9 +398,9 @@ def cmd_habit_delete(args):
 
 
 def cmd_sync(args):
-    """全量同步（V2，除錯用）"""
+    """全量同步（除錯用）"""
     client = create_client_from_env()
-    data = client.sync()
+    data = client.sync(force=True)
     # 只輸出摘要，避免資料量過大
     summary = {
         "inboxId": data.get("inboxId"),
@@ -421,7 +422,7 @@ def cmd_sync(args):
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="ticktick_cli",
-        description="TickTick CLI — V1 + V2 雙層 API",
+        description="TickTick CLI — 任務、專案、標籤、習慣管理工具",
     )
     sub = parser.add_subparsers(dest="command", help="可用命令")
 
@@ -508,32 +509,34 @@ def build_parser():
                    help="筆數上限（預設 5）")
     p.add_argument("--tag", help="按 tag 篩選")
 
-    # ── V2 增強命令 ──────────────────────────────────────────────────────
+    # ── 搜尋與歷史 ──────────────────────────────────────────────────────
 
-    p = sub.add_parser("search", help="搜尋任務（V2）")
+    p = sub.add_parser("search", help="搜尋任務（預設包含已完成任務）")
     p.add_argument("query", help="搜尋關鍵字")
+    p.add_argument("--active-only", action="store_true",
+                   help="只搜尋進行中的任務（排除已完成）")
 
-    p = sub.add_parser("completed", help="已完成任務（V2）")
+    p = sub.add_parser("completed", help="已完成任務歷史")
     p.add_argument("--project", help="專案 ID（不指定則全部）")
     p.add_argument("--limit", type=int, default=50, help="筆數上限")
     p.add_argument("--tag", help="按 tag 篩選")
 
-    sub.add_parser("tags", help="列出所有標籤（V2）")
+    sub.add_parser("tags", help="列出所有標籤")
 
-    p = sub.add_parser("tag-create", help="建立標籤（V2）")
+    p = sub.add_parser("tag-create", help="建立標籤")
     p.add_argument("--name", required=True, help="標籤名稱")
     p.add_argument("--color", help='顏色 hex，如 "#57A8FF"')
     p.add_argument("--parent", help="父標籤名稱")
 
-    p = sub.add_parser("sync", help="全量同步（V2，除錯用）")
+    p = sub.add_parser("sync", help="全量同步（除錯用）")
     p.add_argument("--full", action="store_true",
                    help="輸出完整同步資料（預設只輸出摘要）")
 
-    # ── Habits（V2）──────────────────────────────────────────────────────
+    # ── Habits ──────────────────────────────────────────────────────────
 
-    sub.add_parser("habits", help="列出所有習慣（V2）")
+    sub.add_parser("habits", help="列出所有習慣")
 
-    p = sub.add_parser("habit-create", help="建立習慣（V2）")
+    p = sub.add_parser("habit-create", help="建立習慣")
     p.add_argument("--name", required=True, help="習慣名稱")
     p.add_argument("--frequency", type=int, default=1,
                    help="目標次數（預設 1）")
@@ -542,14 +545,16 @@ def build_parser():
     p.add_argument("--color", help="顏色 hex")
     p.add_argument("--reminder", help="提醒時間，如 \"09:00\"")
 
-    p = sub.add_parser("habit-checkin", help="習慣打卡（V2）")
+    p = sub.add_parser("habit-checkin", help="習慣打卡")
     p.add_argument("--habit", required=True, help="習慣 ID")
     p.add_argument("--date", help="日期 YYYYMMDD（預設今天）")
 
-    p = sub.add_parser("habit-delete", help="刪除習慣（V2）")
+    p = sub.add_parser("habit-delete", help="刪除習慣")
     p.add_argument("--habit", required=True, help="習慣 ID")
 
-    p = sub.add_parser("upload-attachment", help="上傳附件到任務（V2）")
+    # ── Attachments ─────────────────────────────────────────────────────
+
+    p = sub.add_parser("upload-attachment", help="上傳附件到任務")
     p.add_argument("--project", required=True, help="專案 ID")
     p.add_argument("--task", required=True, help="任務 ID")
     p.add_argument("--file", required=True, help="本地檔案路徑")

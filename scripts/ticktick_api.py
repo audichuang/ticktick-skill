@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-ticktick_api.py — TickTick V1 + V2 雙層 API 封裝
+ticktick_api.py — TickTick 統一 API 封裝
 
-V1 (Open API):  官方 REST API，Bearer token 認證
-V2 (Internal):  內部 API，帳密 session 認證（逆向工程）
+使用 TickTick 內部 API（帳密 session 認證），覆蓋所有操作：
+  - Tasks: CRUD + 完成 + 搜尋 + 已完成歷史
+  - Projects: CRUD
+  - Tags: CRUD
+  - Habits: CRUD + 打卡
+  - Attachments: 上傳
+  - Sync: 全量同步
 
 環境變數（由 Doppler 注入）:
-  TICKTICK_ACCESS_TOKEN  — V1 OAuth Bearer token
-  TICKTICK_USERNAME      — V2 登入帳號（email）
-  TICKTICK_PASSWORD      — V2 登入密碼
+  TICKTICK_USERNAME — 登入帳號（email）
+  TICKTICK_PASSWORD — 登入密碼
 
 用法:
   doppler run -p ticktick -c dev -- python3 ticktick_cli.py <command>
@@ -45,107 +49,14 @@ def _error_exit(msg):
 
 
 # =============================================================================
-# V1 Open API — 官方 REST API
+# TickTick API — 統一封裝
 # =============================================================================
 
-class TickTickV1:
-    """TickTick Open API v1 封裝（Bearer token 認證）"""
-
-    BASE_URL = "https://api.ticktick.com/open/v1"
-
-    def __init__(self, access_token: str):
-        if not access_token:
-            _error_exit("TICKTICK_ACCESS_TOKEN 未設定")
-        self.access_token = access_token
-
-    def _request(self, method: str, path: str, data: dict = None) -> dict | list | str:
-        """發送 V1 API 請求"""
-        url = self.BASE_URL + path
-        body = json.dumps(data).encode("utf-8") if data else None
-
-        req = urllib.request.Request(url, data=body, method=method, headers={
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-        })
-
-        try:
-            with urllib.request.urlopen(req) as resp:
-                text = resp.read().decode("utf-8")
-                if not text:
-                    return {}
-                return json.loads(text)
-        except urllib.error.HTTPError as e:
-            body_text = e.read().decode("utf-8", errors="replace")
-            _error_exit(f"V1 API 錯誤 HTTP {e.code}: {body_text}")
-
-    # ── Task Operations ──────────────────────────────────────────────────
-
-    def get_task(self, project_id: str, task_id: str) -> dict:
-        """取得單一任務"""
-        pid = urllib.parse.quote(project_id, safe="")
-        tid = urllib.parse.quote(task_id, safe="")
-        return self._request("GET", f"/project/{pid}/task/{tid}")
-
-    def create_task(self, task_data: dict) -> dict:
-        """建立任務 — 支援所有官方欄位"""
-        return self._request("POST", "/task", task_data)
-
-    def update_task(self, task_id: str, task_data: dict) -> dict:
-        """更新任務"""
-        tid = urllib.parse.quote(task_id, safe="")
-        return self._request("POST", f"/task/{tid}", task_data)
-
-    def complete_task(self, project_id: str, task_id: str) -> dict:
-        """完成任務"""
-        pid = urllib.parse.quote(project_id, safe="")
-        tid = urllib.parse.quote(task_id, safe="")
-        return self._request("POST", f"/project/{pid}/task/{tid}/complete")
-
-    def delete_task(self, project_id: str, task_id: str) -> dict:
-        """刪除任務"""
-        pid = urllib.parse.quote(project_id, safe="")
-        tid = urllib.parse.quote(task_id, safe="")
-        return self._request("DELETE", f"/project/{pid}/task/{tid}")
-
-    # ── Project Operations ───────────────────────────────────────────────
-
-    def list_projects(self) -> list:
-        """列出所有專案"""
-        return self._request("GET", "/project")
-
-    def get_project(self, project_id: str) -> dict:
-        """取得單一專案"""
-        pid = urllib.parse.quote(project_id, safe="")
-        return self._request("GET", f"/project/{pid}")
-
-    def get_project_data(self, project_id: str) -> dict:
-        """取得專案 + 任務 + 欄位"""
-        pid = urllib.parse.quote(project_id, safe="")
-        return self._request("GET", f"/project/{pid}/data")
-
-    def create_project(self, project_data: dict) -> dict:
-        """建立專案"""
-        return self._request("POST", "/project", project_data)
-
-    def update_project(self, project_id: str, project_data: dict) -> dict:
-        """更新專案"""
-        pid = urllib.parse.quote(project_id, safe="")
-        return self._request("POST", f"/project/{pid}", project_data)
-
-    def delete_project(self, project_id: str) -> dict:
-        """刪除專案"""
-        pid = urllib.parse.quote(project_id, safe="")
-        return self._request("DELETE", f"/project/{pid}")
-
-
-# =============================================================================
-# V2 Internal API — 逆向工程的內部 API
-# =============================================================================
-
-class TickTickV2:
-    """TickTick 內部 API v2 封裝（帳密 session 認證）
+class TickTickAPI:
+    """TickTick API 封裝（帳密 session 認證）
 
     使用完整的瀏覽器指紋偽裝，模擬真實的 TickTick Web 客戶端請求。
+    支援所有操作：Tasks, Projects, Tags, Habits, Attachments, Sync。
     """
 
     BASE_URL = "https://api.ticktick.com/api/v2"
@@ -158,6 +69,9 @@ class TickTickV2:
         "Chrome/131.0.0.0 Safari/537.36"
     )
 
+    # Sync 快取 TTL（秒）
+    SYNC_CACHE_TTL = 30
+
     def __init__(self, username: str, password: str):
         if not username or not password:
             _error_exit("TICKTICK_USERNAME 或 TICKTICK_PASSWORD 未設定")
@@ -166,7 +80,12 @@ class TickTickV2:
         self.inbox_id = None
         # 生成持久的裝置 ID（同一個 client 實例保持同一裝置身份）
         self._device_id = "65a0" + secrets.token_hex(10)
+        # Sync 快取
+        self._sync_cache = None
+        self._sync_cache_time = 0
         self._login(username, password)
+
+    # ── 內部工具 ──────────────────────────────────────────────────────────
 
     @property
     def x_device(self) -> str:
@@ -210,15 +129,18 @@ class TickTickV2:
             h.update(extra)
         return h
 
-    def _request(self, method: str, path: str, data: dict = None,
+    def _request(self, method: str, path: str, data=None,
                  params: dict = None) -> dict | list | str:
-        """發送 V2 API 請求"""
+        """發送 API 請求"""
         url = self.BASE_URL + path
         if params:
             qs = urllib.parse.urlencode(params)
             url = f"{url}?{qs}"
 
-        body = json.dumps(data).encode("utf-8") if data else None
+        if data is not None:
+            body = json.dumps(data).encode("utf-8")
+        else:
+            body = None
         req = urllib.request.Request(url, data=body, method=method,
                                     headers=self._headers())
 
@@ -230,7 +152,12 @@ class TickTickV2:
                 return json.loads(text)
         except urllib.error.HTTPError as e:
             body_text = e.read().decode("utf-8", errors="replace")
-            _error_exit(f"V2 API 錯誤 HTTP {e.code}: {body_text}")
+            _error_exit(f"API 錯誤 HTTP {e.code}: {body_text}")
+
+    def _invalidate_cache(self):
+        """清除 sync 快取（修改操作後呼叫）"""
+        self._sync_cache = None
+        self._sync_cache_time = 0
 
     # ── 認證 ──────────────────────────────────────────────────────────────
 
@@ -262,15 +189,262 @@ class TickTickV2:
                 last_error = f"HTTP {e.code}: {e.read().decode('utf-8', errors='replace')}"
                 continue  # 嘗試下一個端點
 
-        _error_exit(f"V2 登入失敗（已嘗試所有端點）: {last_error}")
+        _error_exit(f"登入失敗（已嘗試所有端點）: {last_error}")
 
-    # ── 全量同步 ──────────────────────────────────────────────────────────
+    # ── 全量同步（帶快取）────────────────────────────────────────────────
 
-    def sync(self) -> dict:
-        """一次取得帳號全部資料（tasks, projects, tags, folders）"""
-        return self._request("GET", "/batch/check/0")
+    def sync(self, force: bool = False) -> dict:
+        """一次取得帳號全部資料（tasks, projects, tags, folders）
 
-    # ── 附件上傳 ──────────────────────────────────────────────────────────
+        帶有 TTL 快取，避免短時間內重複請求。
+        """
+        now = time.time()
+        if (not force and self._sync_cache is not None
+                and now - self._sync_cache_time < self.SYNC_CACHE_TTL):
+            return self._sync_cache
+        data = self._request("GET", "/batch/check/0")
+        self._sync_cache = data
+        self._sync_cache_time = now
+        return data
+
+    # ── Task Operations ──────────────────────────────────────────────────
+
+    def get_task(self, project_id: str, task_id: str) -> dict:
+        """取得單一任務（從 sync 快取過濾）"""
+        data = self.sync()
+        tasks = data.get("syncTaskBean", {}).get("update", [])
+        for t in tasks:
+            if t.get("id") == task_id:
+                return t
+        _error_exit(f"找不到任務 {task_id}")
+
+    def list_tasks(self, project_id: str = None) -> list:
+        """列出任務（指定專案或全部）"""
+        data = self.sync()
+        tasks = data.get("syncTaskBean", {}).get("update", [])
+        if project_id:
+            tasks = [t for t in tasks if t.get("projectId") == project_id]
+        return tasks
+
+    def create_task(self, task_data: dict) -> dict:
+        """建立任務"""
+        result = self._request("POST", "/batch/task", {"add": [task_data]})
+        self._invalidate_cache()
+        # 回傳建立的任務（從 id2etag 取得確認）
+        if isinstance(result, dict):
+            result["_input"] = task_data
+        return result
+
+    def update_task(self, task_data: dict) -> dict:
+        """更新任務（GET-merge-POST，保留既有欄位）"""
+        task_id = task_data.get("id")
+        project_id = task_data.get("projectId")
+        if not task_id or not project_id:
+            _error_exit("update_task 需要 id 和 projectId")
+        # 先取完整 task data（含 attachments 等），merge 更新欄位
+        existing = self.get_task(project_id, task_id)
+        existing.update(task_data)
+        result = self._request("POST", "/batch/task", {"update": [existing]})
+        self._invalidate_cache()
+        return result
+
+    def complete_task(self, project_id: str, task_id: str) -> dict:
+        """完成任務（GET 現有資料 → 設 status=2 → batch update）"""
+        existing = self.get_task(project_id, task_id)
+        existing["status"] = 2
+        result = self._request("POST", "/batch/task", {"update": [existing]})
+        self._invalidate_cache()
+        return result
+
+    def delete_task(self, project_id: str, task_id: str) -> dict:
+        """刪除任務"""
+        result = self._request("POST", "/batch/task", {"delete": [{
+            "taskId": task_id,
+            "projectId": project_id,
+        }]})
+        self._invalidate_cache()
+        return result
+
+    def search_tasks(self, query: str, include_completed: bool = True) -> list:
+        """搜尋任務（同時搜尋進行中和已完成的任務）
+
+        Args:
+            query: 搜尋關鍵字
+            include_completed: 是否包含已完成任務（預設 True）
+        """
+        q = query.lower()
+
+        def _match(t):
+            return (q in t.get("title", "").lower() or
+                    q in t.get("content", "").lower() or
+                    q in t.get("desc", "").lower())
+
+        # 搜尋 active tasks
+        data = self.sync()
+        active = data.get("syncTaskBean", {}).get("update", [])
+        results = [t for t in active if _match(t)]
+
+        # 搜尋 completed tasks
+        if include_completed:
+            completed = self.get_completed_tasks(limit=200)
+            results.extend([t for t in completed if _match(t)])
+
+        return results
+
+    def get_completed_tasks(self, project_id: str = None,
+                            limit: int = 50) -> list:
+        """取得已完成任務"""
+        if project_id:
+            pid = urllib.parse.quote(project_id, safe="")
+            path = f"/project/{pid}/completed"
+        else:
+            path = "/project/all/completed"
+        params = {"from": "", "to": "", "limit": str(limit)}
+        return self._request("GET", path, params=params)
+
+    # ── Project Operations ───────────────────────────────────────────────
+
+    def list_projects(self) -> list:
+        """列出所有專案"""
+        data = self.sync()
+        return data.get("projectProfiles", [])
+
+    def get_project(self, project_id: str) -> dict:
+        """取得單一專案"""
+        projects = self.list_projects()
+        for p in projects:
+            if p.get("id") == project_id:
+                return p
+        _error_exit(f"找不到專案 {project_id}")
+
+    def get_project_data(self, project_id: str) -> dict:
+        """取得專案 + 其所有任務"""
+        project = self.get_project(project_id)
+        tasks = self.list_tasks(project_id)
+        return {"project": project, "tasks": tasks}
+
+    def create_project(self, project_data: dict) -> dict:
+        """建立專案"""
+        result = self._request("POST", "/batch/projectProfile",
+                               {"add": [project_data]})
+        self._invalidate_cache()
+        return result
+
+    def update_project(self, project_id: str, project_data: dict) -> dict:
+        """更新專案"""
+        existing = self.get_project(project_id)
+        existing.update(project_data)
+        result = self._request("POST", "/batch/projectProfile",
+                               {"update": [existing]})
+        self._invalidate_cache()
+        return result
+
+    def delete_project(self, project_id: str) -> dict:
+        """刪除專案"""
+        result = self._request("POST", "/batch/projectProfile",
+                               {"delete": [project_id]})
+        self._invalidate_cache()
+        return result
+
+    # ── Tags ──────────────────────────────────────────────────────────────
+
+    def list_tags(self) -> list:
+        """列出所有標籤（從 sync 資料提取）"""
+        data = self.sync()
+        return data.get("tags", [])
+
+    def create_tag(self, name: str, color: str = None,
+                   parent: str = None) -> dict:
+        """建立標籤"""
+        tag = {"label": name, "name": name.lower(), "sortType": "project"}
+        if color:
+            tag["color"] = color
+        if parent:
+            tag["parent"] = parent.lower()
+        result = self._request("POST", "/batch/tag", {"add": [tag]})
+        self._invalidate_cache()
+        return result
+
+    # ── Habits ────────────────────────────────────────────────────────────
+
+    def list_habits(self) -> list:
+        """列出所有習慣"""
+        return self._request("GET", "/habits")
+
+    def create_habit(self, name: str, frequency: int = 1,
+                     period: str = "day", icon: str = None,
+                     color: str = None, reminder: str = None) -> dict:
+        """建立習慣
+
+        Args:
+            name: 習慣名稱
+            frequency: 目標次數（預設 1）
+            period: day / week
+            icon: emoji icon
+            color: 顏色 hex
+            reminder: 提醒時間，如 "09:00"
+        """
+        habit_id = format(int(time.time()), '08x') + secrets.token_hex(8)
+        # 根據週期建立 RRULE
+        if period == "week":
+            repeat = f"RRULE:FREQ=WEEKLY;INTERVAL=1;TT_TIMES={frequency}"
+        else:
+            repeat = "RRULE:FREQ=DAILY;INTERVAL=1"
+        habit = {
+            "id": habit_id,
+            "name": name,
+            "type": "Boolean",
+            "goal": float(frequency),
+            "unit": "Count",
+            "step": 1.0,
+            "repeatRule": repeat,
+            "status": 0,
+            "encouragement": "",
+            "totalCheckIns": 0,
+            "sectionId": "",
+        }
+        if icon:
+            habit["iconRes"] = icon
+        if color:
+            habit["color"] = color
+        if reminder:
+            habit["reminders"] = [reminder]
+        return self._request("POST", "/habits/batch", {
+            "add": [habit], "update": [], "delete": [],
+        })
+
+    def checkin_habit(self, habit_id: str, date: str = None,
+                      value: float = 1.0) -> dict:
+        """習慣打卡
+
+        Args:
+            habit_id: 習慣 ID
+            date: 日期 YYYYMMDD（預設今天）
+            value: 打卡值（預設 1）
+        """
+        if not date:
+            from datetime import datetime
+            date = datetime.now().strftime("%Y%m%d")
+        checkin_id = format(int(time.time()), '08x') + secrets.token_hex(8)
+        checkin = {
+            "id": checkin_id,
+            "habitId": habit_id,
+            "checkinStamp": int(date),
+            "status": 2,
+            "value": value,
+            "goal": 0,
+        }
+        return self._request("POST", "/habitCheckins/batch", {
+            "add": [checkin], "update": [], "delete": [],
+        })
+
+    def delete_habit(self, habit_id: str) -> dict:
+        """刪除習慣"""
+        return self._request("POST", "/habits/batch", {
+            "add": [], "update": [], "delete": [habit_id],
+        })
+
+    # ── Attachments ──────────────────────────────────────────────────────
 
     def upload_attachment(self, project_id: str, task_id: str,
                           file_path: str) -> dict:
@@ -307,7 +481,7 @@ class TickTickV2:
             f"\r\n"
         ).encode("utf-8") + file_data + f"\r\n--{boundary}--\r\n".encode("utf-8")
 
-        # 使用 V1 attachment endpoint（非 V2）
+        # 使用 V1 attachment endpoint
         pid = urllib.parse.quote(project_id, safe="")
         tid = urllib.parse.quote(task_id, safe="")
         url = f"https://api.ticktick.com/api/v1/attachment/upload/{pid}/{tid}/{attachment_id}"
@@ -333,73 +507,6 @@ class TickTickV2:
             body_text = e.read().decode("utf-8", errors="replace")
             _error_exit(f"附件上傳失敗 HTTP {e.code}: {body_text}")
 
-    # ── 已完成任務 ────────────────────────────────────────────────────────
-
-    def get_completed_tasks(self, project_id: str = None,
-                            limit: int = 50) -> list:
-        """取得已完成任務"""
-        if project_id:
-            pid = urllib.parse.quote(project_id, safe="")
-            path = f"/project/{pid}/completed"
-            params = {"from": "", "to": "", "limit": str(limit)}
-        else:
-            path = "/project/all/completed"
-            params = {"from": "", "to": "", "limit": str(limit)}
-        return self._request("GET", path, params=params)
-
-    # ── 批次操作 ──────────────────────────────────────────────────────────
-
-    def batch_task(self, add: list = None, update: list = None,
-                   delete: list = None) -> dict:
-        """批次任務操作（add/update/delete）"""
-        payload = {}
-        if add:
-            payload["add"] = add
-        if update:
-            payload["update"] = update
-        if delete:
-            payload["delete"] = delete
-        return self._request("POST", "/batch/task", payload)
-
-    # ── Habits ──────────────────────────────────────────────────────────────
-
-    def list_habits(self) -> list:
-        """列出所有習慣"""
-        return self._request("GET", "/habits")
-
-    def batch_habit(self, add: list = None, update: list = None,
-                    delete: list = None) -> dict:
-        """批次習慣操作"""
-        payload = {"add": add or [], "update": update or [],
-                   "delete": delete or []}
-        return self._request("POST", "/habits/batch", payload)
-
-    def batch_checkin(self, add: list = None, update: list = None,
-                      delete: list = None) -> dict:
-        """批次打卡操作"""
-        payload = {"add": add or [], "update": update or [],
-                   "delete": delete or []}
-        return self._request("POST", "/habitCheckins/batch", payload)
-
-    # ── Tags ──────────────────────────────────────────────────────────────
-
-    def list_tags(self) -> list:
-        """列出所有標籤（從 sync 資料提取）"""
-        data = self.sync()
-        return data.get("tags", [])
-
-    def batch_tag(self, add: list = None, update: list = None,
-                  delete: list = None) -> dict:
-        """批次標籤操作"""
-        payload = {}
-        if add:
-            payload["add"] = add
-        if update:
-            payload["update"] = update
-        if delete:
-            payload["delete"] = delete
-        return self._request("POST", "/batch/tag", payload)
-
     # ── User & Settings ──────────────────────────────────────────────────
 
     def get_user_settings(self) -> dict:
@@ -413,273 +520,15 @@ class TickTickV2:
 
 
 # =============================================================================
-# 統一高階介面
-# =============================================================================
-
-class TickTickClient:
-    """結合 V1 + V2 的統一介面
-    
-    V1: 用於官方支援的操作（穩定）
-    V2: 用於 V1 不支援的進階功能（搜尋、已完成任務、tags 等）
-    """
-
-    def __init__(self, access_token: str = None,
-                 username: str = None, password: str = None):
-        self.v1 = TickTickV1(access_token) if access_token else None
-        self.v2 = TickTickV2(username, password) if (username and password) else None
-
-        if not self.v1 and not self.v2:
-            _error_exit("至少需要 V1 (TICKTICK_ACCESS_TOKEN) 或 V2 (USERNAME+PASSWORD) 認證")
-
-    # ── Task Operations（優先 V1）────────────────────────────────────────
-
-    def list_projects(self) -> list:
-        """列出所有專案"""
-        if self.v1:
-            return self.v1.list_projects()
-        # V2 fallback: 從 sync 取
-        data = self.v2.sync()
-        return data.get("projectProfiles", [])
-
-    def get_project(self, project_id: str) -> dict:
-        """取得單一專案"""
-        if self.v1:
-            return self.v1.get_project(project_id)
-        _error_exit("get_project 需要 V1 認證")
-
-    def get_project_data(self, project_id: str) -> dict:
-        """取得專案 + 任務 + 欄位"""
-        if self.v1:
-            return self.v1.get_project_data(project_id)
-        _error_exit("get_project_data 需要 V1 認證")
-
-    def create_project(self, **kwargs) -> dict:
-        """建立專案"""
-        if self.v1:
-            return self.v1.create_project(kwargs)
-        _error_exit("create_project 需要 V1 認證")
-
-    def update_project(self, project_id: str, **kwargs) -> dict:
-        """更新專案"""
-        if self.v1:
-            return self.v1.update_project(project_id, kwargs)
-        _error_exit("update_project 需要 V1 認證")
-
-    def delete_project(self, project_id: str) -> dict:
-        """刪除專案"""
-        if self.v1:
-            return self.v1.delete_project(project_id)
-        _error_exit("delete_project 需要 V1 認證")
-
-    def list_tasks(self, project_id: str = None) -> list:
-        """列出任務（指定專案或全部）"""
-        if project_id:
-            if self.v1:
-                data = self.v1.get_project_data(project_id)
-                return data.get("tasks", [])
-        # 全部任務：用 V2 sync 或遍歷專案
-        if self.v2:
-            data = self.v2.sync()
-            tasks = data.get("syncTaskBean", {}).get("update", [])
-            if project_id:
-                tasks = [t for t in tasks if t.get("projectId") == project_id]
-            return tasks
-        # V1 fallback: 遍歷所有專案
-        projects = self.v1.list_projects()
-        all_tasks = []
-        for p in projects:
-            try:
-                pd = self.v1.get_project_data(p["id"])
-                all_tasks.extend(pd.get("tasks", []))
-            except SystemExit:
-                pass  # 跳過失敗的專案
-        return all_tasks
-
-    def get_task(self, project_id: str, task_id: str) -> dict:
-        """取得單一任務"""
-        if self.v1:
-            return self.v1.get_task(project_id, task_id)
-        _error_exit("get_task 需要 V1 認證")
-
-    def create_task(self, **kwargs) -> dict:
-        """建立任務 — 支援所有欄位"""
-        if self.v1:
-            return self.v1.create_task(kwargs)
-        _error_exit("create_task 需要 V1 認證")
-
-    def update_task(self, task_id: str, **kwargs) -> dict:
-        """更新任務（GET-merge-POST，避免覆蓋附件等欄位）"""
-        if not self.v1:
-            _error_exit("update_task 需要 V1 認證")
-        # 先取得完整 task data（含 attachments 等所有欄位）
-        project_id = kwargs.get("projectId")
-        if not project_id:
-            _error_exit("update_task 需要 projectId")
-        existing = self.v1.get_task(project_id, task_id)
-        # 把更新欄位 merge 上去
-        existing.update(kwargs)
-        return self.v1.update_task(task_id, existing)
-
-    def complete_task(self, project_id: str, task_id: str) -> dict:
-        """完成任務"""
-        if self.v1:
-            return self.v1.complete_task(project_id, task_id)
-        _error_exit("complete_task 需要 V1 認證")
-
-    def delete_task(self, project_id: str, task_id: str) -> dict:
-        """刪除任務"""
-        if self.v1:
-            return self.v1.delete_task(project_id, task_id)
-        _error_exit("delete_task 需要 V1 認證")
-
-    # ── V2 增強功能 ──────────────────────────────────────────────────────
-
-    def search_tasks(self, query: str) -> list:
-        """搜尋任務（V2 sync + 本地過濾）"""
-        if not self.v2:
-            _error_exit("search 需要 V2 認證 (USERNAME+PASSWORD)")
-        data = self.v2.sync()
-        tasks = data.get("syncTaskBean", {}).get("update", [])
-        q = query.lower()
-        return [t for t in tasks if
-                q in t.get("title", "").lower() or
-                q in t.get("content", "").lower() or
-                q in t.get("desc", "").lower()]
-
-    def get_completed_tasks(self, project_id: str = None,
-                            limit: int = 50) -> list:
-        """取得已完成任務"""
-        if not self.v2:
-            _error_exit("completed 需要 V2 認證 (USERNAME+PASSWORD)")
-        return self.v2.get_completed_tasks(project_id, limit)
-
-    def list_tags(self) -> list:
-        """列出所有標籤"""
-        if not self.v2:
-            _error_exit("tags 需要 V2 認證 (USERNAME+PASSWORD)")
-        return self.v2.list_tags()
-
-    def create_tag(self, name: str, color: str = None,
-                   parent: str = None) -> dict:
-        """建立標籤"""
-        if not self.v2:
-            _error_exit("tag-create 需要 V2 認證 (USERNAME+PASSWORD)")
-        tag = {"label": name, "name": name.lower(), "sortType": "project"}
-        if color:
-            tag["color"] = color
-        if parent:
-            tag["parent"] = parent.lower()
-        return self.v2.batch_tag(add=[tag])
-
-    # ── Habits（V2）────────────────────────────────────────────────────────
-
-    def list_habits(self) -> list:
-        """列出所有習慣"""
-        if not self.v2:
-            _error_exit("habits 需要 V2 認證 (USERNAME+PASSWORD)")
-        return self.v2.list_habits()
-
-    def create_habit(self, name: str, frequency: int = 1,
-                     period: str = "day", icon: str = None,
-                     color: str = None, reminder: str = None) -> dict:
-        """建立習慣
-
-        Args:
-            name: 習慣名稱
-            frequency: 目標次數（預設 1）
-            period: day / week
-            icon: emoji icon
-            color: 顏色 hex
-            reminder: 提醒時間，如 "09:00"
-        """
-        if not self.v2:
-            _error_exit("habit-create 需要 V2 認證 (USERNAME+PASSWORD)")
-        import secrets, time
-        habit_id = format(int(time.time()), '08x') + secrets.token_hex(8)
-        # 根據週期建立 RRULE
-        if period == "week":
-            repeat = f"RRULE:FREQ=WEEKLY;INTERVAL=1;TT_TIMES={frequency}"
-        else:
-            repeat = "RRULE:FREQ=DAILY;INTERVAL=1"
-        habit = {
-            "id": habit_id,
-            "name": name,
-            "type": "Boolean",
-            "goal": float(frequency),
-            "unit": "Count",
-            "step": 1.0,
-            "repeatRule": repeat,
-            "status": 0,
-            "encouragement": "",
-            "totalCheckIns": 0,
-            "sectionId": "",
-        }
-        if icon:
-            habit["iconRes"] = icon
-        if color:
-            habit["color"] = color
-        if reminder:
-            habit["reminders"] = [reminder]
-        return self.v2.batch_habit(add=[habit])
-
-    def checkin_habit(self, habit_id: str, date: str = None,
-                      value: float = 1.0) -> dict:
-        """習慣打卡
-
-        Args:
-            habit_id: 習慣 ID
-            date: 日期 YYYYMMDD（預設今天）
-            value: 打卡值（預設 1）
-        """
-        if not self.v2:
-            _error_exit("habit-checkin 需要 V2 認證 (USERNAME+PASSWORD)")
-        import time, secrets
-        if not date:
-            from datetime import datetime
-            date = datetime.now().strftime("%Y%m%d")
-        checkin_id = format(int(time.time()), '08x') + secrets.token_hex(8)
-        checkin = {
-            "id": checkin_id,
-            "habitId": habit_id,
-            "checkinStamp": int(date),
-            "status": 2,
-            "value": value,
-            "goal": 0,
-        }
-        return self.v2.batch_checkin(add=[checkin])
-
-    def delete_habit(self, habit_id: str) -> dict:
-        """刪除習慣"""
-        if not self.v2:
-            _error_exit("habit-delete 需要 V2 認證 (USERNAME+PASSWORD)")
-        return self.v2.batch_habit(delete=[habit_id])
-
-    def sync(self) -> dict:
-        """全量同步（除錯用）"""
-        if not self.v2:
-            _error_exit("sync 需要 V2 認證 (USERNAME+PASSWORD)")
-        return self.v2.sync()
-
-    def upload_attachment(self, project_id: str, task_id: str,
-                          file_path: str) -> dict:
-        """上傳附件到指定任務"""
-        if not self.v2:
-            _error_exit("upload-attachment 需要 V2 認證 (USERNAME+PASSWORD)")
-        return self.v2.upload_attachment(project_id, task_id, file_path)
-
-
-# =============================================================================
 # 快捷建構函式
 # =============================================================================
 
-def create_client_from_env() -> TickTickClient:
+def create_client_from_env() -> TickTickAPI:
     """從環境變數建立 client（搭配 doppler run 使用）"""
-    access_token = os.environ.get("TICKTICK_ACCESS_TOKEN")
     username = os.environ.get("TICKTICK_USERNAME")
     password = os.environ.get("TICKTICK_PASSWORD")
 
-    return TickTickClient(
-        access_token=access_token,
-        username=username,
-        password=password,
-    )
+    if not username or not password:
+        _error_exit("需要設定 TICKTICK_USERNAME 和 TICKTICK_PASSWORD 環境變數")
+
+    return TickTickAPI(username=username, password=password)

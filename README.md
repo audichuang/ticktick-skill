@@ -1,11 +1,15 @@
 # TickTick CLI Skill
 
-管理 TickTick 任務和專案的 CLI 工具，結合 V1 官方 API 和 V2 內部 API。
+管理 TickTick 任務、專案、標籤和習慣的 CLI 工具。
 
 ## 功能
 
-* **V1 Official API** — Tasks / Projects 完整 CRUD（含子任務、提醒、重複規則）
-* **V2 Internal API** — 任務搜尋、已完成任務歷史、標籤 CRUD、全量同步
+* Tasks — 完整 CRUD（含子任務、提醒、重複規則）
+* Projects — 完整 CRUD
+* Search — 任務搜尋、已完成任務歷史
+* Tags — CRUD
+* Habits — CRUD + 打卡
+* Attachments — 檔案上傳
 
 零依賴，純 Python 標準庫（`urllib.request`），搭配 Doppler 管理密鑰。
 
@@ -14,25 +18,15 @@
 ### 1. Doppler 環境變數
 
 ```bash
-# 建立 Doppler project
+# 建立 Doppler project（如尚未建立）
 doppler projects create ticktick
 
-# V1 認證（OAuth Bearer token）
-doppler secrets set TICKTICK_ACCESS_TOKEN="<your_token>" -p ticktick -c dev
-
-# V2 認證（帳密登入）
+# 設定認證
 doppler secrets set TICKTICK_USERNAME="<your_email>" -p ticktick -c dev
 doppler secrets set TICKTICK_PASSWORD="<your_password>" -p ticktick -c dev
 ```
 
-### 2. 取得 V1 Access Token
-
-1. 前往 [TickTick Developer Center](https://developer.ticktick.com/manage)
-2. 建立 App，設定 Redirect URI 為 `http://localhost:8080`
-3. 完成 OAuth 授權流程取得 `access_token`
-4. 將 token 存入 Doppler
-
-### 3. 執行命令
+### 2. 執行命令
 
 ```bash
 doppler run -p ticktick -c dev -- python3 scripts/ticktick_cli.py <command>
@@ -51,10 +45,18 @@ ticktick_cli.py task-create --project <pid> --title "Title" --priority high
 ticktick_cli.py task-complete <pid> <tid>
 ticktick_cli.py task-delete <pid> <tid>
 
-# V2 增強
+# 搜尋與歷史
 ticktick_cli.py search "keyword"
 ticktick_cli.py completed --limit 10
+
+# 標籤
 ticktick_cli.py tags
+
+# 習慣
+ticktick_cli.py habits
+ticktick_cli.py habit-checkin --habit <id>
+
+# 同步
 ticktick_cli.py sync
 ```
 
@@ -67,10 +69,10 @@ ticktick/
 ├── SKILL.md                  # AI Agent 使用指引
 ├── README.md                 # 人類安裝設定指引
 ├── scripts/
-│   ├── ticktick_api.py       # V1+V2 雙層 API 封裝
-│   └── ticktick_cli.py       # CLI 入口（16 個子命令）
+│   ├── ticktick_api.py       # 統一 API 封裝
+│   └── ticktick_cli.py       # CLI 入口（22 個子命令）
 └── references/
-    └── api-reference.md      # V1+V2 端點速查
+    └── api-reference.md      # 端點速查
 ```
 
 ## License
