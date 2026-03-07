@@ -272,24 +272,27 @@ def cmd_task_delete(args):
 
 
 def cmd_task_recent(args):
-    """查看專案最近 N 筆任務（精簡格式，供建立新任務時參考）"""
+    """查看專案最近 N 筆任務（含已完成，供建立新任務時參考）"""
     client = create_client_from_env()
-    tasks = client.list_tasks(project_id=args.project)
+    include_completed = not args.active_only
+    tasks = client.list_recent_tasks(
+        project_id=args.project,
+        limit=args.limit,
+        include_completed=include_completed,
+    )
     # Tag 篩選
     if args.tag:
         tasks = [t for t in tasks if args.tag in t.get("tags", [])]
-    # 按 createdDate 倒序排列
-    tasks.sort(key=lambda t: t.get("createdDate", ""), reverse=True)
-    tasks = tasks[:args.limit]
     # 只保留關鍵欄位
     KEEP = {"title", "content", "desc", "priority", "dueDate", "startDate",
             "reminders", "repeatFlag", "items", "kind", "isAllDay", "timeZone",
-            "tags"}
+            "tags", "completedTime"}
     slim = []
     for t in tasks:
         entry = {k: v for k, v in t.items() if k in KEEP and v}
         if "priority" in entry:
             entry["priority"] = PRIORITY_REVERSE.get(entry["priority"], entry["priority"])
+        entry["status"] = "completed" if t.get("status") == 2 else "active"
         slim.append(entry)
     _json_output(slim)
 
@@ -503,11 +506,13 @@ def build_parser():
     p.add_argument("task_id", help="任務 ID")
 
     p = sub.add_parser("task-recent",
-                       help="查看專案最近 N 筆任務（精簡格式，建立新任務前參考用）")
+                       help="查看專案最近 N 筆任務（含已完成，建立前先確認無重複）")
     p.add_argument("--project", required=True, help="專案 ID")
     p.add_argument("--limit", type=int, default=5,
                    help="筆數上限（預設 5）")
     p.add_argument("--tag", help="按 tag 篩選")
+    p.add_argument("--active-only", action="store_true",
+                   help="只顯示進行中的任務（排除已完成）")
 
     # ── 搜尋與歷史 ──────────────────────────────────────────────────────
 

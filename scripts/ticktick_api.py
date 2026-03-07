@@ -210,21 +210,43 @@ class TickTickAPI:
     # ── Task Operations ──────────────────────────────────────────────────
 
     def get_task(self, project_id: str, task_id: str) -> dict:
-        """取得單一任務（從 sync 快取過濾）"""
+        """取得單一任務（active 找不到會自動搜尋 completed）"""
+        # 先從 active tasks 找
         data = self.sync()
-        tasks = data.get("syncTaskBean", {}).get("update", [])
-        for t in tasks:
+        for t in data.get("syncTaskBean", {}).get("update", []):
             if t.get("id") == task_id:
                 return t
-        _error_exit(f"找不到任務 {task_id}")
+        # Fallback: 從 completed tasks 找
+        completed = self.get_completed_tasks(project_id=project_id, limit=200)
+        for t in completed:
+            if t.get("id") == task_id:
+                return t
+        _error_exit(f"找不到任務 {task_id}（active 和 completed 都查過了）")
 
     def list_tasks(self, project_id: str = None) -> list:
-        """列出任務（指定專案或全部）"""
+        """列出進行中的任務"""
         data = self.sync()
         tasks = data.get("syncTaskBean", {}).get("update", [])
         if project_id:
             tasks = [t for t in tasks if t.get("projectId") == project_id]
         return tasks
+
+    def list_recent_tasks(self, project_id: str, limit: int = 10,
+                          include_completed: bool = True) -> list:
+        """列出專案最近的任務（active + completed 合併，按時間排序）"""
+        # Active tasks
+        tasks = self.list_tasks(project_id)
+        # Completed tasks
+        if include_completed:
+            completed = self.get_completed_tasks(
+                project_id=project_id, limit=limit)
+            tasks.extend(completed)
+        # 按建立時間倒序
+        tasks.sort(
+            key=lambda t: t.get("completedTime") or t.get("createdTime", ""),
+            reverse=True,
+        )
+        return tasks[:limit]
 
     def create_task(self, task_data: dict) -> dict:
         """建立任務"""

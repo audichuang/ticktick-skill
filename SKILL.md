@@ -21,14 +21,15 @@ doppler run -p ticktick -c dev -- python3 scripts/ticktick_cli.py <command>
 
 每次建立任務前，**必須**依序執行以下步驟：
 
-1. **查看最近任務**：先用 `task-recent --project <PID>` 查看該專案最近 5 筆任務（可加 `--tag` 篩選類型）
-2. **分析格式**：觀察 title 命名風格、content 結構、reminder 設定、priority、tags 等模式
-3. **模仿格式**：新任務的 title / content / reminder / priority / tags 等欄位，必須與同類型既有任務保持一致的風格
-4. **建立任務**：確認格式一致後，才執行 `task-create`（記得加上正確的 `--tag`）
+1. **查看最近任務（含已完成）**：先用 `task-recent --project <PID>` 查看該專案最近任務。此命令**預設包含已完成任務**，每筆會標記 `status: active/completed`
+2. **確認無重複**：檢查是否已有同名或同類型的任務（含已完成的）。如果有，**直接更新該任務**而非新建
+3. **分析格式**：觀察 title 命名風格、content 結構、reminder 設定、priority、tags 等模式
+4. **模仿格式**：新任務的 title / content / reminder / priority / tags 等欄位，必須與同類型既有任務保持一致的風格
+5. **建立任務**：確認無重複且格式一致後，才執行 `task-create`（記得加上正確的 `--tag`）
 
-**嚴禁**：未查看既有任務就直接建立任務、自行發明 title 格式或 content 結構。
+**嚴禁**：未查看既有任務就直接建立任務、自行發明 title 格式或 content 結構、忽略已完成的同名任務而重複建立。
 
-**範例**：如果該專案的健身任務 title 都是「🏋️ 健身教練課」且帶 tag `健身`，新任務也必須用同樣格式和 tag。
+**範例**：如果 `task-recent` 列出的任務中，「羽球課」已經 `status: completed`，就不該新建一筆，而是用 `task-update` 把內容寫進那筆已完成的任務。
 
 ## ⚠️ 完成任務時自動打卡（必須遵守）
 
@@ -57,7 +58,8 @@ ticktick_cli.py project-delete <project_id>
 ### Tasks
 
 ```bash
-ticktick_cli.py task-recent --project <pid> [--limit 5] [--tag TAG]   # ⚠️ 建立前先看格式
+ticktick_cli.py task-recent --project <pid> [--limit 5] [--tag TAG]   # ⚠️ 建立前先看（含已完成）
+ticktick_cli.py task-recent --project <pid> --active-only             # 只看進行中
 ticktick_cli.py tasks [--project PID] [--status pending|completed] [--tag TAG]
 ticktick_cli.py task-get <project_id> <task_id>
 ticktick_cli.py task-create --project <pid> --title "Title" \
