@@ -23,8 +23,8 @@ doppler run -p ticktick -c dev -- python3 scripts/ticktick_cli.py <command>
 
 1. **查看最近任務（含已完成）**：先用 `task-recent --project <PID>` 查看該專案最近任務。此命令**預設包含已完成任務**，每筆會標記 `status: active/completed`
 2. **確認無重複**：檢查是否已有同名或同類型的任務（含已完成的）。如果有，**直接更新該任務**而非新建
-3. **分析格式**：觀察 title 命名風格、content 結構、reminder 設定、priority、tags 等模式
-4. **模仿格式**：新任務的 title / content / reminder / priority / tags 等欄位，必須與同類型既有任務保持一致的風格
+3. **分析格式**：觀察 title 命名風格、content 結構、reminder 設定、priority、tags、**startDate / dueDate / isAllDay** 等模式
+4. **模仿格式**：新任務的 title / content / reminder / priority / tags / **startDate / dueDate / isAllDay** 等欄位，必須與同類型既有任務保持一致的風格
 5. **建立任務**：確認無重複且格式一致後，才執行 `task-create`（記得加上正確的 `--tag`）
 
 **嚴禁**：未查看既有任務就直接建立任務、自行發明 title 格式或 content 結構、忽略已完成的同名任務而重複建立。
@@ -71,6 +71,36 @@ ticktick_cli.py task-create --project <pid> --title "Title" \
 ticktick_cli.py task-update <task_id> --project <pid> [--title "..."] [--priority high] [--tag "健身"]
 ticktick_cli.py task-complete <project_id> <task_id>
 ticktick_cli.py task-delete <project_id> <task_id>
+```
+
+### ⚠️ 時段任務 vs 全天任務（必須遵守）
+
+建立有**具體時間段**的任務（課程、會議、健身等），**必須**遵守以下規則：
+
+| 情境 | 正確做法 | 錯誤做法 |
+|------|----------|----------|
+| 有明確時段（如 13:00-14:00） | 用 `--start` + `--due` 設定起止時間 | ❌ 只設 `--due` 不設 `--start` |
+| 整天事件（如生日、截止日） | 用 `--due` + `--all-day` | ❌ 有時段卻用 `--all-day` |
+| 時間資訊 | 放在 `--start` / `--due` 參數 | ❌ 把時間塞在 title 裡 |
+
+**嚴禁**：
+
+* ❌ 把時間寫在 title 裡（如 `--title "羽球課 13:00-14:00"`），時間必須用 `--start` + `--due`
+* ❌ 有明確時段卻用 `--all-day` 或完全不設時間
+* ❌ 只設 `--due` 不設 `--start`（這會讓 TickTick 顯示為截止日而非時段）
+
+```bash
+# ✅ 正確：時段任務（羽球課 13:00-14:00）
+ticktick_cli.py task-create --project <pid> --title "🏸 羽球課" \
+  --start "2026-03-13T13:00:00+0800" --due "2026-03-13T14:00:00+0800" \
+  --reminder "TRIGGER:-PT30M" --tag "運動"
+
+# ✅ 正確：全天任務（整天截止日）
+ticktick_cli.py task-create --project <pid> --title "報告截止" \
+  --due "2026-03-15T00:00:00+0800" --all-day
+
+# ❌ 錯誤：把時間塞在 title 裡
+ticktick_cli.py task-create --project <pid> --title "羽球課 03/13 13:00-14:00"
 ```
 
 **Multi-line content**: Use `\n` in `--content` / `--desc` for line breaks. The CLI auto-converts literal `\n` to real newlines.
