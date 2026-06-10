@@ -21,12 +21,19 @@ ticktick_api.py — TickTick 統一 API 封裝
 import json
 import mimetypes
 import os
+import re
 import secrets
 import sys
 import time
 import urllib.request
 import urllib.error
 import urllib.parse
+from datetime import datetime, timezone
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python < 3.9
+    ZoneInfo = None
 
 
 # =============================================================================
@@ -46,6 +53,36 @@ def _error_exit(msg):
     """錯誤退出"""
     print(json.dumps({"success": False, "error": msg}), file=sys.stderr)
     sys.exit(1)
+
+
+_HEX_COLOR_RE = re.compile(r"^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$")
+
+
+def check_hex_color(color: str) -> bool:
+    """驗證是否為合法 hex color（#RRGGBB 或 #RGB）。"""
+    return bool(color) and bool(_HEX_COLOR_RE.match(color))
+
+
+def to_ticktick_date(dt: datetime, tz: str = None) -> str:
+    """把 datetime 轉成 TickTick 接受的日期字串，例如 2026-06-20T08:30:00+0800。
+
+    TickTick 的偏移量「不帶冒號」（+0800 而非 +08:00）——這正好是 strftime
+    '%z' 的輸出，所以不需要 ticktick-py 那種反轉切字串的把戲。
+
+    - dt 為 naive 時，視為 tz（未給則 UTC）的當地時間。
+    - dt 帶 tzinfo 時，若給 tz 則轉換到該時區。
+
+    額外要注意的 TickTick 怪癖（呼叫端自行處理，這裡不代勞）：
+      全天（all-day）區間的「結束日」不含當天，所以 due 需 +1 天才會顯示到當天。
+    """
+    if tz is not None:
+        if ZoneInfo is None:
+            _error_exit("zoneinfo 不可用，無法處理具名時區")
+        zone = ZoneInfo(tz)
+        dt = dt.replace(tzinfo=zone) if dt.tzinfo is None else dt.astimezone(zone)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 # =============================================================================
@@ -72,9 +109,21 @@ class TickTickAPI:
     # Sync 快取 TTL（秒）
     SYNC_CACHE_TTL = 30
 
+    # 請求逾時（秒）。沒有 timeout 時，上游 hang 會讓呼叫端（NAS worker）無限卡死。
+    REQUEST_TIMEOUT = 30
+
+    # 暫時性錯誤的重試（指數退避）。只重試 5xx 與連線層失敗；4xx 不重試，
+    # 其中 401 由下方 relogin 另行處理。
+    MAX_RETRIES = 2
+    RETRY_BACKOFF_BASE = 0.5
+    RETRY_STATUS = frozenset({500, 502, 503, 504})
+
     def __init__(self, username: str, password: str):
         if not username or not password:
             _error_exit("TICKTICK_USERNAME 或 TICKTICK_PASSWORD 未設定")
+        # 保留帳密以便 session 過期時自動重登（見 _request 的 401 處理）。
+        self._username = username
+        self._password = password
         self.session_token = None
         self.csrf_token = None
         self.inbox_id = None
@@ -130,7 +179,7 @@ class TickTickAPI:
         return h
 
     def _request(self, method: str, path: str, data=None,
-                 params: dict = None) -> dict | list | str:
+                 params: dict = None, _retried: bool = False) -> dict | list | str:
         """發送 API 請求"""
         url = self.BASE_URL + path
         if params:
@@ -144,15 +193,34 @@ class TickTickAPI:
         req = urllib.request.Request(url, data=body, method=method,
                                     headers=self._headers())
 
-        try:
-            with urllib.request.urlopen(req) as resp:
-                text = resp.read().decode("utf-8")
-                if not text:
-                    return {}
-                return json.loads(text)
-        except urllib.error.HTTPError as e:
-            body_text = e.read().decode("utf-8", errors="replace")
-            _error_exit(f"API 錯誤 HTTP {e.code}: {body_text}")
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.REQUEST_TIMEOUT) as resp:
+                    text = resp.read().decode("utf-8")
+                    if not text:
+                        return {}
+                    return json.loads(text)
+            except urllib.error.HTTPError as e:
+                # Session 過期會回 401。lazy singleton client 不會自己重登，過期後
+                # 會一路失敗到行程重啟——所以這裡自動重登一次再重試（旗標防無限迴圈）。
+                if (e.code == 401 and not _retried
+                        and self._username and self._password):
+                    self._login(self._username, self._password)
+                    return self._request(method, path, data, params, _retried=True)
+                # 5xx 是暫時性的（TickTick/Cloudflare 偶發），退避後重試。
+                if e.code in self.RETRY_STATUS and attempt < self.MAX_RETRIES:
+                    time.sleep(self.RETRY_BACKOFF_BASE * (2 ** attempt))
+                    continue
+                body_text = e.read().decode("utf-8", errors="replace")
+                _error_exit(f"API 錯誤 HTTP {e.code}: {body_text}")
+            except urllib.error.URLError as e:
+                # 連線層失敗（DNS、連線被拒、逾時）。socket.timeout 也會包成 URLError，
+                # 沒有這個分支會直接外洩成未捕捉例外（後端變成不透明的 500）。
+                # 暫時性居多，退避後重試，耗盡才報錯。
+                if attempt < self.MAX_RETRIES:
+                    time.sleep(self.RETRY_BACKOFF_BASE * (2 ** attempt))
+                    continue
+                _error_exit(f"連線 TickTick 失敗或逾時: {e.reason}")
 
     def _invalidate_cache(self):
         """清除 sync 快取（修改操作後呼叫）"""
@@ -175,7 +243,7 @@ class TickTickAPI:
             req = urllib.request.Request(url, data=payload, method="POST",
                                         headers=self._headers())
             try:
-                with urllib.request.urlopen(req) as resp:
+                with urllib.request.urlopen(req, timeout=self.REQUEST_TIMEOUT) as resp:
                     # 從 Set-Cookie 擷取 _csrf_token
                     for header in resp.headers.get_all("Set-Cookie") or []:
                         if "_csrf_token=" in header:
@@ -187,6 +255,9 @@ class TickTickAPI:
                         return  # 登入成功
             except urllib.error.HTTPError as e:
                 last_error = f"HTTP {e.code}: {e.read().decode('utf-8', errors='replace')}"
+                continue  # 嘗試下一個端點
+            except urllib.error.URLError as e:
+                last_error = f"連線失敗或逾時: {e.reason}"
                 continue  # 嘗試下一個端點
 
         _error_exit(f"登入失敗（已嘗試所有端點）: {last_error}")
@@ -287,6 +358,45 @@ class TickTickAPI:
         self._invalidate_cache()
         return result
 
+    def move_task(self, task_id: str, from_project_id: str,
+                  to_project_id: str) -> dict:
+        """將單一任務搬到另一個 project（batch/taskProject）。"""
+        result = self._request("POST", "/batch/taskProject", [{
+            "fromProjectId": from_project_id,
+            "taskId": task_id,
+            "toProjectId": to_project_id,
+        }])
+        self._invalidate_cache()
+        return result
+
+    def move_all(self, from_project_id: str, to_project_id: str) -> dict:
+        """把來源 project 的所有進行中任務一次搬到目標 project。"""
+        tasks = self.list_tasks(from_project_id)
+        if not tasks:
+            return {"moved": 0}
+        payload = [{
+            "fromProjectId": from_project_id,
+            "taskId": t["id"],
+            "toProjectId": to_project_id,
+        } for t in tasks]
+        result = self._request("POST", "/batch/taskProject", payload)
+        self._invalidate_cache()
+        return result
+
+    def make_subtask(self, child_id: str, parent_id: str,
+                     project_id: str) -> dict:
+        """將 child 設為 parent 的子任務（batch/taskParent）。
+
+        TickTick 要求父子任務在同一個 project，且兩者都必須先存在。
+        """
+        result = self._request("POST", "/batch/taskParent", [{
+            "parentId": parent_id,
+            "projectId": project_id,
+            "taskId": child_id,
+        }])
+        self._invalidate_cache()
+        return result
+
     def search_tasks(self, query: str, include_completed: bool = True) -> list:
         """搜尋任務（同時搜尋進行中和已完成的任務）
 
@@ -297,9 +407,10 @@ class TickTickAPI:
         q = query.lower()
 
         def _match(t):
-            return (q in t.get("title", "").lower() or
-                    q in t.get("content", "").lower() or
-                    q in t.get("desc", "").lower())
+            # 欄位可能是 None（TickTick 對 content/desc 會回 null），需防 None.lower()
+            return (q in (t.get("title") or "").lower() or
+                    q in (t.get("content") or "").lower() or
+                    q in (t.get("desc") or "").lower())
 
         # 搜尋 active tasks
         data = self.sync()
@@ -380,6 +491,8 @@ class TickTickAPI:
         """建立標籤"""
         tag = {"label": name, "name": name.lower(), "sortType": "project"}
         if color:
+            if not check_hex_color(color):
+                _error_exit(f"無效的 hex color: {color!r}（需如 #RRGGBB 或 #RGB）")
             tag["color"] = color
         if parent:
             tag["parent"] = parent.lower()
@@ -406,6 +519,9 @@ class TickTickAPI:
             color: 顏色 hex（預設 #97E38B 綠色）
             reminder: 提醒時間，如 "09:00"
         """
+        color = color or "#97E38B"            # 預設綠色
+        if not check_hex_color(color):
+            _error_exit(f"無效的 hex color: {color!r}（需如 #RRGGBB 或 #RGB）")
         habit_id = format(int(time.time()), '08x') + secrets.token_hex(8)
         today = time.strftime("%Y%m%d")
         # 根據週期建立 RRULE
@@ -426,7 +542,7 @@ class TickTickAPI:
             "totalCheckIns": 0,
             "completedCycles": 0,
             # ── App 顯示必需欄位 ──
-            "color": color or "#97E38B",    # 預設綠色
+            "color": color,                 # 已驗證（預設 #97E38B 綠色）
             "iconRes": icon or "",
             "sortOrder": 0,
             "sectionId": "-1",              # -1 = 預設 section
@@ -525,7 +641,7 @@ class TickTickAPI:
         req = urllib.request.Request(url, data=body, method="POST", headers=headers)
 
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=self.REQUEST_TIMEOUT) as resp:
                 text = resp.read().decode("utf-8")
                 result = json.loads(text) if text else {}
                 result["attachmentUrl"] = (
