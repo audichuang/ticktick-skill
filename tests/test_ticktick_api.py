@@ -255,3 +255,11 @@ def test_to_ticktick_date_converts_aware_dt_into_target_zone():
     dt = datetime(2026, 6, 20, 0, 0, 0, tzinfo=timezone.utc)  # 00:00 UTC
     # → 08:00 in Taipei (+0800)
     assert ticktick_api.to_ticktick_date(dt, "Asia/Taipei") == "2026-06-20T08:00:00+0800"
+
+
+def test_x_device_pins_accepted_web_version():
+    # 6072 gets `need_upgrade_client` from TickTick; 8000 is verified working.
+    api = _api_no_login()
+    device = json.loads(api.x_device)
+    assert device["version"] == 8000
+    assert device["platform"] == "web"

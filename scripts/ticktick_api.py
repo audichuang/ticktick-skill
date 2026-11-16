@@ -106,6 +106,10 @@ class TickTickAPI:
         "Chrome/131.0.0.0 Safari/537.36"
     )
 
+    # x-device 的 web 版本號。太舊會被 TickTick 以 need_upgrade_client 拒絕
+    # （6072 已被拒；8000 於 2026-11 驗證可用）。
+    DEVICE_VERSION = 8000
+
     # Sync 快取 TTL（秒）
     SYNC_CACHE_TTL = 30
 
@@ -144,7 +148,7 @@ class TickTickAPI:
             "os": "OS X",
             "device": "Chrome 131.0.0.0",
             "name": "",
-            "version": 6072,
+            "version": self.DEVICE_VERSION,
             "id": self._device_id,
             "channel": "website",
             "campaign": "",
